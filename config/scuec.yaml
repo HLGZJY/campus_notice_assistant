@@ -1,0 +1,27 @@
+# 中南民族大学 - 创新创业学院配置
+school:
+  name: 中南民族大学
+  code: scuec
+
+sources:
+  - name: 创新创业学院-竞赛通知
+    type: web
+    list_url: https://www.scuec.edu.cn/cxcy/scss/jstz.htm
+    # url_pattern 和 pagination 不填则自动发现
+    # url_pattern: "info/1009/\\d+\\.htm"  # 可选：手动指定通知 URL 正则
+    max_pages: 20
+
+  - name: 创新创业学院-结果公示
+    type: web
+    list_url: https://www.scuec.edu.cn/cxcy/scss/jggs.htm
+    max_pages: 20
+
+  - name: 教务处-管理文件
+    type: web
+    list_url: https://www.scuec.edu.cn/jwc/glwj.htm
+    # url_pattern: "info/\\d+/\\d+\\.htm|normal\\.jsp"  # 可选：info/ 和 normal.jsp 两种模式
+    max_pages: 20
+
+crawl:
+  interval_minutes: 60
+  user_agent: "CampusAssistant/1.0"
