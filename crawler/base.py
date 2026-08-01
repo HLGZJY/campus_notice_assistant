@@ -94,8 +94,16 @@ class ListPageParser:
             # 自动发现：URL 模式聚类
             filtered = self._auto_discover_links(all_links)
 
+        # 从 <dt> 元素提取日期，构建 url -> date 映射
+        date_map = self._extract_dates_from_list()
+
         return [
-            NoticeItem(url=url, title=text, list_source=self.base_url)
+            NoticeItem(
+                url=url,
+                title=text,
+                list_source=self.base_url,
+                published_at=date_map.get(url),
+            )
             for text, url in filtered
             if text  # 过滤掉空标题
         ]
@@ -239,6 +247,47 @@ class ListPageParser:
         # 取数量最多的模式
         best_pattern = pattern_counter.most_common(1)[0][0]
         return pattern_links[best_pattern]
+
+    def _extract_dates_from_list(self) -> dict[str, str]:
+        """从列表页的 <dt> 或 <tr> 元素提取日期，返回 {url: date} 映射。
+
+        很多学校网站在列表页包含日期，比详情页的 newspaper4k 提取更可靠。
+        支持两种常见格式：
+        1. <dt> 内 <span class="date">日期</span>（教务处格式）
+        2. <tr> 内 <td class="postTime">日期</td>（创新创业学院格式）
+        """
+        date_map: dict[str, str] = {}
+
+        # 格式1: <dt> 内的 <span class="date"> 或 <span class="time">
+        for dt in self.soup.find_all("dt"):
+            a = dt.find("a", href=True)
+            if not a:
+                continue
+            full_url = urljoin(self.base_url, a["href"])
+            date_span = dt.find("span", class_="date") or dt.find("span", class_="time")
+            if date_span:
+                date_text = date_span.get_text(strip=True)
+                if date_text:
+                    date_map[full_url] = date_text
+
+        # 格式2: <tr> 内的 <td class="postTime"> 或 <td> 内的日期
+        for tr in self.soup.find_all("tr"):
+            a = tr.find("a", href=True)
+            if not a:
+                continue
+            full_url = urljoin(self.base_url, a["href"])
+            if full_url in date_map:
+                continue  # 已有日期，跳过
+            # 查找 postTime 类或包含日期格式的 td
+            for td in tr.find_all("td"):
+                classes = td.get("class", [])
+                if "postTime" in classes or "date" in classes:
+                    date_text = td.get_text(strip=True)
+                    if date_text:
+                        date_map[full_url] = date_text
+                        break
+
+        return date_map
 
 
 class PageFetcher:

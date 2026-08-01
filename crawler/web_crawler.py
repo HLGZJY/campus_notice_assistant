@@ -6,13 +6,13 @@ import newspaper
 
 try:
     from ..storage.db import get_connection, insert_notice, log_crawl, url_exists
-    from ..storage.models import CrawlResult, NoticeRecord
+    from ..storage.models import CrawlResult, NoticeItem, NoticeRecord
 except ImportError:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from storage.db import get_connection, insert_notice, log_crawl, url_exists
-    from storage.models import CrawlResult, NoticeRecord
+    from storage.models import CrawlResult, NoticeItem, NoticeRecord
 
 from .base import ListPageConfig, ListPageParser, PageFetcher
 
@@ -37,7 +37,7 @@ class WebCrawler:
     def crawl(self) -> CrawlResult:
         """执行完整抓取流程。"""
         result = CrawlResult(source=self.config.source_name or self.config.list_url)
-        all_notices: dict[str, str] = {}  # url -> title（去重）
+        all_notices: dict[str, NoticeItem] = {}  # url -> NoticeItem（去重）
 
         # 1. 抓取第一页，发现通知链接和翻页
         try:
@@ -51,7 +51,7 @@ class WebCrawler:
         # 发现第一页的通知链接
         notices = parser.discover_notice_links(self.config.url_pattern)
         for n in notices:
-            all_notices[n.url] = n.title
+            all_notices[n.url] = n
         result.total_discovered = len(all_notices)
 
         # 2. 发现并遍历翻页
@@ -67,7 +67,7 @@ class WebCrawler:
                 )
                 for n in page_notices:
                     if n.url not in all_notices:
-                        all_notices[n.url] = n.title
+                        all_notices[n.url] = n
             except Exception as e:
                 result.errors.append(f"翻页抓取失败 {page_url}: {e}")
 
@@ -80,13 +80,13 @@ class WebCrawler:
         # 3. 抓取详情页，存入 SQLite
         conn = get_connection()
         try:
-            for url, title in all_notices.items():
+            for url, item in all_notices.items():
                 if url_exists(conn, url):
                     result.total_skipped += 1
                     continue
 
                 try:
-                    record = self._fetch_detail(url, title)
+                    record = self._fetch_detail(url, item.title, item.published_at)
                     if record:
                         insert_notice(conn, record)
                         result.total_new += 1
@@ -110,8 +110,16 @@ class WebCrawler:
 
         return result
 
-    def _fetch_detail(self, url: str, fallback_title: str) -> Optional[NoticeRecord]:
-        """用 newspaper4k 抓取详情页，返回 NoticeRecord。"""
+    def _fetch_detail(
+        self, url: str, fallback_title: str, list_page_date: Optional[str] = None
+    ) -> Optional[NoticeRecord]:
+        """用 newspaper4k 抓取详情页，返回 NoticeRecord。
+
+        Args:
+            url: 详情页 URL
+            fallback_title: 列表页提取的标题（newspaper4k 失败时使用）
+            list_page_date: 列表页提取的日期（newspaper4k 失败时使用）
+        """
         try:
             article = newspaper.article(url, language="zh")
             title = article.title or fallback_title
@@ -121,14 +129,19 @@ class WebCrawler:
                 # newspaper4k 提取失败，用 fallback
                 content = self._fallback_extract(url)
 
+            # newspaper4k 日期优先，列表页日期作为 fallback
+            published_at = None
+            if article.publish_date:
+                published_at = article.publish_date.isoformat()
+            elif list_page_date:
+                published_at = list_page_date
+
             return NoticeRecord(
                 url=url,
                 source=self.config.source_name,
                 title=title,
                 raw_content=content,
-                published_at=article.publish_date.isoformat()
-                if article.publish_date
-                else None,
+                published_at=published_at,
             )
         except Exception as e:
             logger.warning(f"newspaper4k 提取失败 {url}: {e}")
@@ -141,6 +154,7 @@ class WebCrawler:
                     source=self.config.source_name,
                     title=fallback_title,
                     raw_content=content,
+                    published_at=list_page_date,
                 )
             except Exception:
                 return None
