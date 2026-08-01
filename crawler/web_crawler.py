@@ -1,5 +1,6 @@
 """网页爬虫：列表页遍历 + 详情页提取。"""
 import logging
+import time
 from typing import Optional
 
 import newspaper
@@ -44,7 +45,7 @@ class WebCrawler:
 
     def __init__(self, config: ListPageConfig):
         self.config = config
-        self.fetcher = PageFetcher()
+        self.fetcher = PageFetcher(timeout=config.timeout)
 
     def crawl(self) -> CrawlResult:
         """执行完整抓取流程。"""
@@ -114,6 +115,10 @@ class WebCrawler:
                     result.total_failed += 1
                     result.errors.append(f"详情页失败 {url}: {e}")
                     logger.warning(f"详情页失败 {url}: {e}")
+
+                # 请求间隔（防封）
+                if self.config.delay > 0:
+                    time.sleep(self.config.delay)
         finally:
             log_crawl(
                 conn,

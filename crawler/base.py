@@ -44,6 +44,10 @@ class ListPageConfig:
     pagination_selector: Optional[str] = None
     # 可选：最大翻页数
     max_pages: int = DEFAULT_MAX_PAGES
+    # 可选：HTTP 超时（秒）
+    timeout: int = DEFAULT_TIMEOUT
+    # 可选：请求间隔（秒，防封）
+    delay: float = 0
 
 
 @dataclass
