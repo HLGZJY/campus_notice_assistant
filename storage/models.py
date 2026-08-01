@@ -11,6 +11,7 @@ class NoticeItem:
     url: str
     title: str
     list_source: str  # 来自哪个列表页
+    published_at: Optional[str] = None  # 列表页提取的日期
 
 
 @dataclass
