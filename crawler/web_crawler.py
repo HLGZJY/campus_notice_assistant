@@ -5,13 +5,25 @@ from typing import Optional
 import newspaper
 
 try:
-    from ..storage.db import get_connection, insert_notice, log_crawl, url_exists
+    from ..storage.db import (
+        get_connection,
+        get_notice_by_url,
+        insert_notice,
+        log_crawl,
+        update_notice_date,
+    )
     from ..storage.models import CrawlResult, NoticeItem, NoticeRecord
 except ImportError:
     import sys
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).parent.parent))
-    from storage.db import get_connection, insert_notice, log_crawl, url_exists
+    from storage.db import (
+        get_connection,
+        get_notice_by_url,
+        insert_notice,
+        log_crawl,
+        update_notice_date,
+    )
     from storage.models import CrawlResult, NoticeItem, NoticeRecord
 
 from .base import ListPageConfig, ListPageParser, PageFetcher
@@ -81,8 +93,14 @@ class WebCrawler:
         conn = get_connection()
         try:
             for url, item in all_notices.items():
-                if url_exists(conn, url):
-                    result.total_skipped += 1
+                existing = get_notice_by_url(conn, url)
+                if existing:
+                    # 已有记录：检查是否需要更新日期
+                    if not existing["published_at"] and item.published_at:
+                        update_notice_date(conn, url, item.published_at)
+                        result.total_updated += 1
+                    else:
+                        result.total_skipped += 1
                     continue
 
                 try:

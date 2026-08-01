@@ -51,6 +51,19 @@ def url_exists(conn: sqlite3.Connection, url: str) -> bool:
     return row is not None
 
 
+def get_notice_by_url(conn: sqlite3.Connection, url: str) -> Optional[dict]:
+    """按 URL 查询已有记录，返回 dict 或 None。"""
+    row = conn.execute("SELECT published_at FROM notices WHERE url = ?", (url,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_notice_date(conn: sqlite3.Connection, url: str, published_at: str) -> bool:
+    """更新已有记录的 published_at 字段。"""
+    conn.execute("UPDATE notices SET published_at = ? WHERE url = ?", (published_at, url))
+    conn.commit()
+    return True
+
+
 def insert_notice(conn: sqlite3.Connection, record: NoticeRecord) -> bool:
     """插入一条通知，返回是否新增（False 表示已存在）。"""
     try:
