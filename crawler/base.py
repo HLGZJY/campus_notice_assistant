@@ -249,14 +249,16 @@ class ListPageParser:
         return pattern_links[best_pattern]
 
     def _extract_dates_from_list(self) -> dict[str, str]:
-        """从列表页的 <dt> 或 <tr> 元素提取日期，返回 {url: date} 映射。
+        """从列表页提取日期，返回 {url: date} 映射。
 
-        很多学校网站在列表页包含日期，比详情页的 newspaper4k 提取更可靠。
-        支持两种常见格式：
+        支持三种常见格式：
         1. <dt> 内 <span class="date">日期</span>（教务处格式）
-        2. <tr> 内 <td class="postTime">日期</td>（创新创业学院格式）
+        2. <tr> 内 <td class="postTime">日期</td>（创新创业学院主列表格式）
+        3. <tr> 内 <div style="white-space:nowrap">日期</div>（侧边栏格式）
         """
+        import re
         date_map: dict[str, str] = {}
+        date_pattern = re.compile(r"\d{4}-\d{2}-\d{2}")
 
         # 格式1: <dt> 内的 <span class="date"> 或 <span class="time">
         for dt in self.soup.find_all("dt"):
@@ -270,7 +272,7 @@ class ListPageParser:
                 if date_text:
                     date_map[full_url] = date_text
 
-        # 格式2: <tr> 内的 <td class="postTime"> 或 <td> 内的日期
+        # 格式2+3: <tr> 内的日期（postTime 类 或 white-space:nowrap div）
         for tr in self.soup.find_all("tr"):
             a = tr.find("a", href=True)
             if not a:
@@ -278,7 +280,8 @@ class ListPageParser:
             full_url = urljoin(self.base_url, a["href"])
             if full_url in date_map:
                 continue  # 已有日期，跳过
-            # 查找 postTime 类或包含日期格式的 td
+
+            # 查找 postTime 类的 td
             for td in tr.find_all("td"):
                 classes = td.get("class", [])
                 if "postTime" in classes or "date" in classes:
@@ -286,6 +289,16 @@ class ListPageParser:
                     if date_text:
                         date_map[full_url] = date_text
                         break
+
+            # 查找 white-space:nowrap 的 div（侧边栏格式）
+            if full_url not in date_map:
+                for div in tr.find_all("div"):
+                    style = div.get("style", "")
+                    if "white-space" in style or "nowrap" in style:
+                        date_text = div.get_text(strip=True)
+                        if date_pattern.search(date_text):
+                            date_map[full_url] = date_text
+                            break
 
         return date_map
 
