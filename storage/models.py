@@ -35,5 +35,6 @@ class CrawlResult:
     total_discovered: int = 0
     total_new: int = 0
     total_skipped: int = 0  # 已存在的
+    total_updated: int = 0  # 已有记录更新日期数
     total_failed: int = 0
     errors: list[str] = field(default_factory=list)
