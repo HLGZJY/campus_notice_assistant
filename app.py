@@ -25,6 +25,9 @@ from crawler.base import ListPageConfig
 from crawler.web_crawler import WebCrawler
 from storage.db import (
     count_notices_by_status,
+    delete_notice,
+    delete_notices_bulk,
+    delete_todo,
     get_connection,
     get_crawl_logs,
     get_notice,
@@ -34,6 +37,8 @@ from storage.db import (
     get_urgent_todos,
     search_notices,
     set_todo_status,
+    update_notice_fields,
+    update_todo,
 )
 
 st.set_page_config(page_title="校园通知助手", layout="wide", initial_sidebar_state="expanded")
@@ -87,6 +92,11 @@ def _db():
 def load_config():
     with open("config/scuec.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def save_config(config: dict):
+    with open("config/scuec.yaml", "w", encoding="utf-8") as f:
+        yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
 def badge_html(notice_type: str) -> str:
@@ -514,50 +524,282 @@ def page_action_items():
 def page_settings():
     st.header("⚙️ 设置与导出")
 
-    tab_crawl, tab_extract, tab_logs, tab_export = st.tabs(
-        ["📡 抓取管理", "🤖 批量提取", "📜 抓取日志", "📤 导出数据"]
+    tab_sources, tab_data, tab_extract, tab_logs, tab_export = st.tabs(
+        ["📡 抓取源管理", "🗃️ 数据管理", "🤖 批量提取", "📜 抓取日志", "📤 导出数据"]
     )
 
-    with tab_crawl:
-        st.subheader("手动触发抓取")
+    # --- Tab 1: 抓取源管理 ---
+    with tab_sources:
+        st.subheader("抓取源配置")
         config = load_config()
         sources = config.get("sources", [])
-        for src in sources:
-            with st.container(border=True):
-                cols = st.columns([3, 1, 1])
-                cols[0].write(f"**{src['name']}**")
-                cols[0].caption(src["list_url"])
-                if cols[1].button("开始抓取", key=f"crawl_{src['name']}", use_container_width=True):
-                    with st.spinner(f"正在抓取 {src['name']}..."):
-                        cfg = ListPageConfig(
-                            list_url=src["list_url"],
-                            source_name=src["name"],
-                            url_pattern=src.get("url_pattern"),
-                            max_pages=src.get("max_pages", 20),
-                        )
-                        result = WebCrawler(cfg).crawl()
-                    st.success(
-                        f"完成：发现 {result.total_discovered}，新增 {result.total_new}，"
-                        f"更新 {result.total_updated}，跳过 {result.total_skipped}，失败 {result.total_failed}"
-                    )
-                    if result.errors:
-                        with st.expander("错误详情"):
-                            for e in result.errors[:10]:
-                                st.warning(e)
-                if cols[2].button("预览(不入库)", key=f"preview_{src['name']}", use_container_width=True):
-                    with st.spinner("预览中..."):
-                        cfg = ListPageConfig(
-                            list_url=src["list_url"],
-                            source_name=src["name"],
-                            url_pattern=src.get("url_pattern"),
-                            max_pages=min(src.get("max_pages", 20), 3),
-                        )
-                        result = WebCrawler(cfg).crawl()
-                    if result.total_new > 0:
-                        st.info(f"预览：会新增 {result.total_new} 条，发现 {result.total_discovered} 条")
-                    else:
-                        st.info("预览：无新增内容")
 
+        if sources:
+            for idx, src in enumerate(sources):
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([4, 1, 1])
+                    c1.write(f"**{src['name']}**")
+                    c1.caption(src["list_url"])
+
+                    if c2.button("编辑", key=f"edit_src_{idx}"):
+                        st.session_state[f"editing_src_{idx}"] = True
+
+                    if c3.button("删除", key=f"del_src_{idx}"):
+                        st.session_state[f"confirm_del_src_{idx}"] = True
+
+                    if st.session_state.get(f"confirm_del_src_{idx}"):
+                        st.warning(f"确认删除「{src['name']}」？")
+                        c_yes, c_no, _ = st.columns([1, 1, 4])
+                        if c_yes.button("确认删除", key=f"yes_del_src_{idx}"):
+                            config["sources"].pop(idx)
+                            save_config(config)
+                            st.session_state.pop(f"confirm_del_src_{idx}", None)
+                            st.success("已删除")
+                            st.rerun()
+                        if c_no.button("取消", key=f"no_del_src_{idx}"):
+                            st.session_state.pop(f"confirm_del_src_{idx}", None)
+                            st.rerun()
+
+                    if st.session_state.get(f"editing_src_{idx}"):
+                        with st.form(key=f"form_edit_src_{idx}"):
+                            new_name = st.text_input("名称", value=src["name"])
+                            new_url = st.text_input("列表页 URL", value=src["list_url"])
+                            new_pattern = st.text_input("URL 正则（可选）", value=src.get("url_pattern") or "")
+                            new_max = st.number_input("最大页数", value=src.get("max_pages", 20), min_value=1, max_value=100)
+                            fc1, fc2 = st.columns(2)
+                            if fc1.form_submit_button("保存"):
+                                config["sources"][idx] = {
+                                    "name": new_name,
+                                    "type": src.get("type", "web"),
+                                    "list_url": new_url,
+                                    "max_pages": new_max,
+                                }
+                                if new_pattern:
+                                    config["sources"][idx]["url_pattern"] = new_pattern
+                                save_config(config)
+                                st.session_state.pop(f"editing_src_{idx}", None)
+                                st.success("已保存")
+                                st.rerun()
+                            if fc2.form_submit_button("取消"):
+                                st.session_state.pop(f"editing_src_{idx}", None)
+                                st.rerun()
+
+                    c_crawl, c_preview, _ = st.columns([1, 1, 4])
+                    if c_crawl.button("开始抓取", key=f"crawl_{idx}", use_container_width=True):
+                        with st.spinner(f"正在抓取 {src['name']}..."):
+                            cfg = ListPageConfig(
+                                list_url=src["list_url"],
+                                source_name=src["name"],
+                                url_pattern=src.get("url_pattern"),
+                                max_pages=src.get("max_pages", 20),
+                            )
+                            result = WebCrawler(cfg).crawl()
+                        st.success(
+                            f"完成：发现 {result.total_discovered}，新增 {result.total_new}，"
+                            f"更新 {result.total_updated}，跳过 {result.total_skipped}，失败 {result.total_failed}"
+                        )
+                        if result.errors:
+                            with st.expander("错误详情"):
+                                for e in result.errors[:10]:
+                                    st.warning(e)
+                    if c_preview.button("预览(不入库)", key=f"preview_{idx}", use_container_width=True):
+                        with st.spinner("预览中..."):
+                            cfg = ListPageConfig(
+                                list_url=src["list_url"],
+                                source_name=src["name"],
+                                url_pattern=src.get("url_pattern"),
+                                max_pages=min(src.get("max_pages", 20), 3),
+                            )
+                            result = WebCrawler(cfg).crawl()
+                        if result.total_new > 0:
+                            st.info(f"预览：会新增 {result.total_new} 条，发现 {result.total_discovered} 条")
+                        else:
+                            st.info("预览：无新增内容")
+        else:
+            st.info("暂无抓取源")
+
+        st.divider()
+        st.subheader("新增抓取源")
+        with st.form(key="form_add_source"):
+            add_name = st.text_input("名称", placeholder="如：计算机学院通知")
+            add_url = st.text_input("列表页 URL", placeholder="https://...")
+            add_pattern = st.text_input("URL 正则（可选）", placeholder="info/\\d+/\\d+\\.htm")
+            add_max = st.number_input("最大页数", value=20, min_value=1, max_value=100)
+            if st.form_submit_button("➕ 添加", type="primary"):
+                if not add_name or not add_url:
+                    st.error("名称和 URL 不能为空")
+                else:
+                    new_source = {
+                        "name": add_name,
+                        "type": "web",
+                        "list_url": add_url,
+                        "max_pages": add_max,
+                    }
+                    if add_pattern:
+                        new_source["url_pattern"] = add_pattern
+                    config.setdefault("sources", []).append(new_source)
+                    save_config(config)
+                    st.success(f"已添加「{add_name}」")
+                    st.rerun()
+
+    # --- Tab 2: 数据管理 ---
+    with tab_data:
+        st.subheader("通知管理")
+        conn = _db()
+
+        fc1, fc2, fc3 = st.columns(3)
+        filter_source = fc1.selectbox("来源", ["全部"] + [r[0] for r in conn.execute("SELECT DISTINCT source FROM notices ORDER BY source").fetchall()])
+        filter_status = fc2.selectbox("状态", ["全部", "extracted", "partial", "raw", "failed"])
+        filter_limit = fc3.number_input("条数", 10, 500, 50, step=10)
+
+        notices = search_notices(
+            conn,
+            notice_type=None,
+            status=filter_status if filter_status != "全部" else None,
+            limit=filter_limit,
+        )
+        if filter_source != "全部":
+            notices = [n for n in notices if n["source"] == filter_source]
+
+        st.write(f"共 {len(notices)} 条通知")
+
+        for n in notices[:20]:
+            with st.container(border=True):
+                nc1, nc2, nc3 = st.columns([5, 1, 1])
+                nc1.write(f"**#{n['id']} {n['title']}**")
+                nc1.caption(f"{n['source']} · {n.get('published_at', '未知')[:10]} · {n['status']}")
+
+                if nc2.button("编辑", key=f"edit_n_{n['id']}"):
+                    st.session_state[f"editing_n_{n['id']}"] = True
+                if nc3.button("删除", key=f"del_n_{n['id']}"):
+                    st.session_state[f"confirm_del_n_{n['id']}"] = True
+
+                if st.session_state.get(f"confirm_del_n_{n['id']}"):
+                    st.warning("确认删除此通知？（关联待办也会删除）")
+                    yc, nc, _ = st.columns([1, 1, 4])
+                    if yc.button("确认删除", key=f"yes_del_n_{n['id']}"):
+                        delete_notice(conn, n["id"])
+                        st.session_state.pop(f"confirm_del_n_{n['id']}", None)
+                        st.success("已删除")
+                        st.rerun()
+                    if nc.button("取消", key=f"no_del_n_{n['id']}"):
+                        st.session_state.pop(f"confirm_del_n_{n['id']}", None)
+                        st.rerun()
+
+                if st.session_state.get(f"editing_n_{n['id']}"):
+                    with st.form(key=f"form_edit_n_{n['id']}"):
+                        new_title = st.text_input("标题", value=n["title"])
+                        new_source = st.text_input("来源", value=n["source"])
+                        new_summary = st.text_area("摘要", value=n.get("summary") or "")
+                        new_status = st.selectbox("状态", ["raw", "extracted", "partial", "failed"], index=["raw", "extracted", "partial", "failed"].index(n["status"]))
+                        fsc1, fsc2 = st.columns(2)
+                        if fsc1.form_submit_button("保存"):
+                            update_notice_fields(conn, n["id"], {
+                                "title": new_title,
+                                "source": new_source,
+                                "summary": new_summary,
+                                "status": new_status,
+                            })
+                            st.session_state.pop(f"editing_n_{n['id']}", None)
+                            st.success("已保存")
+                            st.rerun()
+                        if fsc2.form_submit_button("取消"):
+                            st.session_state.pop(f"editing_n_{n['id']}", None)
+                            st.rerun()
+
+        if len(notices) > 20:
+            st.caption(f"仅显示前 20 条，共 {len(notices)} 条")
+
+        st.divider()
+        st.subheader("批量删除")
+        bc1, bc2 = st.columns(2)
+        bulk_source = bc1.selectbox("按来源删除", ["不选择"] + [r[0] for r in conn.execute("SELECT DISTINCT source FROM notices ORDER BY source").fetchall()])
+        bulk_status = bc2.selectbox("按状态删除", ["不选择", "raw", "failed", "partial"])
+
+        if bulk_source != "不选择" or bulk_status != "不选择":
+            if st.button("🗑️ 执行批量删除", type="secondary"):
+                st.session_state["confirm_bulk_delete"] = True
+
+            if st.session_state.get("confirm_bulk_delete"):
+                st.warning(f"确认删除？来源={bulk_source}，状态={bulk_status}")
+                byc, bnc, _ = st.columns([1, 1, 4])
+                if byc.button("确认", key="yes_bulk"):
+                    count = delete_notices_bulk(
+                        conn,
+                        source=bulk_source if bulk_source != "不选择" else None,
+                        status=bulk_status if bulk_status != "不选择" else None,
+                    )
+                    st.session_state.pop("confirm_bulk_delete", None)
+                    st.success(f"已删除 {count} 条通知")
+                    st.rerun()
+                if bnc.button("取消", key="no_bulk"):
+                    st.session_state.pop("confirm_bulk_delete", None)
+                    st.rerun()
+
+        conn.close()
+
+        st.divider()
+        st.subheader("待办管理")
+        conn = _db()
+        todos = get_todos(conn)
+        conn.close()
+
+        if not todos:
+            st.info("暂无待办")
+        else:
+            st.write(f"共 {len(todos)} 条待办")
+            for t in todos[:20]:
+                with st.container(border=True):
+                    tc1, tc2, tc3 = st.columns([5, 1, 1])
+                    tc1.write(f"**{t['action']}**")
+                    tc1.caption(f"截止: {(t['due_at'] or '-')[:16]} · 优先级: {t['priority']} · 状态: {t['status']}")
+
+                    if tc2.button("编辑", key=f"edit_t_{t['id']}"):
+                        st.session_state[f"editing_t_{t['id']}"] = True
+                    if tc3.button("删除", key=f"del_t_{t['id']}"):
+                        st.session_state[f"confirm_del_t_{t['id']}"] = True
+
+                    if st.session_state.get(f"confirm_del_t_{t['id']}"):
+                        st.warning("确认删除此待办？")
+                        tyc, tnc, _ = st.columns([1, 1, 4])
+                        if tyc.button("确认删除", key=f"yes_del_t_{t['id']}"):
+                            conn = _db()
+                            delete_todo(conn, t["id"])
+                            conn.close()
+                            st.session_state.pop(f"confirm_del_t_{t['id']}", None)
+                            st.success("已删除")
+                            st.rerun()
+                        if tnc.button("取消", key=f"no_del_t_{t['id']}"):
+                            st.session_state.pop(f"confirm_del_t_{t['id']}", None)
+                            st.rerun()
+
+                    if st.session_state.get(f"editing_t_{t['id']}"):
+                        with st.form(key=f"form_edit_t_{t['id']}"):
+                            new_action = st.text_input("待办内容", value=t["action"])
+                            new_due = st.text_input("截止时间 (ISO格式)", value=t["due_at"] or "")
+                            new_priority = st.selectbox("优先级", ["low", "normal", "high"], index=["low", "normal", "high"].index(t["priority"]))
+                            ftc1, ftc2 = st.columns(2)
+                            if ftc1.form_submit_button("保存"):
+                                conn = _db()
+                                update_todo(
+                                    conn,
+                                    t["id"],
+                                    action=new_action,
+                                    due_at=new_due if new_due else None,
+                                    priority=new_priority,
+                                )
+                                conn.close()
+                                st.session_state.pop(f"editing_t_{t['id']}", None)
+                                st.success("已保存")
+                                st.rerun()
+                            if ftc2.form_submit_button("取消"):
+                                st.session_state.pop(f"editing_t_{t['id']}", None)
+                                st.rerun()
+
+            if len(todos) > 20:
+                st.caption(f"仅显示前 20 条，共 {len(todos)} 条")
+
+    # --- Tab 3: 批量提取 ---
     with tab_extract:
         st.subheader("批量结构化提取")
         conn = _db()
@@ -626,6 +868,7 @@ def page_settings():
         else:
             st.info("没有待提取的通知（raw/failed/partial 均为 0）")
 
+    # --- Tab 4: 抓取日志 ---
     with tab_logs:
         st.subheader("最近抓取日志")
         logs = get_crawl_logs(_db(), limit=20)
@@ -644,6 +887,7 @@ def page_settings():
         else:
             st.info("暂无抓取日志")
 
+    # --- Tab 5: 导出数据 ---
     with tab_export:
         st.subheader("导出通知数据")
         conn = _db()

@@ -473,3 +473,92 @@ def get_crawl_logs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
         "SELECT * FROM crawl_log ORDER BY crawled_at DESC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------- CRUD 操作 ----------
+
+
+def delete_notice(conn: sqlite3.Connection, notice_id: int) -> bool:
+    """删除单条通知（级联删除关联待办）。"""
+    conn.execute("DELETE FROM todos WHERE notice_id = ?", (notice_id,))
+    cur = conn.execute("DELETE FROM notices WHERE id = ?", (notice_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def update_notice_fields(conn: sqlite3.Connection, notice_id: int, fields: dict) -> bool:
+    """更新通知的指定字段。"""
+    allowed = {
+        "title", "source", "summary", "status", "notice_type",
+        "target_audience", "signup_method", "signup_url",
+        "location", "location_type", "deadline", "deadline_raw",
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [notice_id]
+    cur = conn.execute(f"UPDATE notices SET {set_clause} WHERE id = ?", values)
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_notices_bulk(
+    conn: sqlite3.Connection,
+    source: Optional[str] = None,
+    status: Optional[str] = None,
+) -> int:
+    """按来源或状态批量删除通知（级联删除关联待办）。返回删除条数。"""
+    where = []
+    params = []
+    if source:
+        where.append("source = ?")
+        params.append(source)
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    if not where:
+        return 0
+    w = " AND ".join(where)
+    ids = [r["id"] for r in conn.execute(f"SELECT id FROM notices WHERE {w}", params).fetchall()]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(f"DELETE FROM todos WHERE notice_id IN ({placeholders})", ids)
+    cur = conn.execute(f"DELETE FROM notices WHERE id IN ({placeholders})", ids)
+    conn.commit()
+    return cur.rowcount
+
+
+def update_todo(
+    conn: sqlite3.Connection,
+    todo_id: int,
+    action: Optional[str] = None,
+    due_at: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> bool:
+    """更新待办的内容、截止时间或优先级。"""
+    updates = []
+    params = []
+    if action is not None:
+        updates.append("action = ?")
+        params.append(action)
+    if due_at is not None:
+        updates.append("due_at = ?")
+        params.append(due_at)
+    if priority is not None:
+        updates.append("priority = ?")
+        params.append(priority)
+    if not updates:
+        return False
+    params.append(todo_id)
+    cur = conn.execute(f"UPDATE todos SET {', '.join(updates)} WHERE id = ?", params)
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_todo(conn: sqlite3.Connection, todo_id: int) -> bool:
+    """删除单条待办。"""
+    cur = conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    conn.commit()
+    return cur.rowcount > 0
