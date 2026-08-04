@@ -1,4 +1,5 @@
 """SQLite 存储层。"""
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -34,14 +35,42 @@ CREATE TABLE IF NOT EXISTS crawl_log (
 );
 """
 
+# M2 结构化提取新增列（对已存在的库做 ALTER 迁移）
+_MIGRATIONS = [
+    "ALTER TABLE notices ADD COLUMN notice_type TEXT",
+    "ALTER TABLE notices ADD COLUMN target_audience TEXT",
+    "ALTER TABLE notices ADD COLUMN signup_method TEXT",
+    "ALTER TABLE notices ADD COLUMN signup_url TEXT",
+    "ALTER TABLE notices ADD COLUMN location TEXT",
+    "ALTER TABLE notices ADD COLUMN location_type TEXT",
+    "ALTER TABLE notices ADD COLUMN deadline TEXT",
+    "ALTER TABLE notices ADD COLUMN deadline_raw TEXT",
+    "ALTER TABLE notices ADD COLUMN key_dates_json TEXT",
+    "ALTER TABLE notices ADD COLUMN summary TEXT",
+    "ALTER TABLE notices ADD COLUMN extracted_at TEXT",
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """对已存在的库补齐 M2 新增列（幂等）。"""
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(notices)").fetchall()
+    }
+    for stmt in _MIGRATIONS:
+        col = stmt.split("ADD COLUMN ")[1].split(" ")[0]
+        if col not in existing:
+            conn.execute(stmt)
+    conn.commit()
+
 
 def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
-    """获取 SQLite 连接，自动建库建表。"""
+    """获取 SQLite 连接，自动建库建表 + 迁移。"""
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -94,6 +123,65 @@ def get_notices_by_status(conn: sqlite3.Connection, status: str, limit: int = 10
         (status, limit),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def update_extraction(
+    conn: sqlite3.Connection,
+    notice_id: int,
+    extraction: dict,
+    status: str,
+) -> None:
+    """更新通知的结构化提取结果。extraction 为 NoticeExtraction 的 dict。"""
+    key_dates = extraction.get("key_dates") or []
+    conn.execute(
+        """UPDATE notices SET
+               notice_type = ?,
+               target_audience = ?,
+               signup_method = ?,
+               signup_url = ?,
+               location = ?,
+               location_type = ?,
+               deadline = ?,
+               deadline_raw = ?,
+               key_dates_json = ?,
+               summary = ?,
+               status = ?,
+               extracted_at = ?
+           WHERE id = ?""",
+        (
+            extraction.get("notice_type"),
+            extraction.get("target_audience"),
+            extraction.get("signup_method"),
+            extraction.get("signup_url"),
+            extraction.get("location"),
+            extraction.get("location_type"),
+            extraction.get("deadline"),
+            extraction.get("deadline_raw"),
+            json.dumps(key_dates, ensure_ascii=False) if key_dates else None,
+            extraction.get("summary"),
+            status,
+            datetime.now().isoformat(),
+            notice_id,
+        ),
+    )
+    conn.commit()
+
+
+def mark_failed(conn: sqlite3.Connection, notice_id: int, error: str) -> None:
+    """把通知标记为提取失败。"""
+    conn.execute(
+        "UPDATE notices SET status = 'failed', extracted_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), notice_id),
+    )
+    conn.commit()
+
+
+def count_notices_by_status(conn: sqlite3.Connection) -> dict[str, int]:
+    """按状态统计通知数量。"""
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS n FROM notices GROUP BY status"
+    ).fetchall()
+    return {r["status"]: r["n"] for r in rows}
 
 
 def log_crawl(

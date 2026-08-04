@@ -13,13 +13,17 @@ CREATE TABLE notices (
     raw_content TEXT,                   -- 原始正文
     published_at TEXT,                  -- 发布时间（ISO 8601）
     crawled_at TEXT NOT NULL,           -- 抓取时间
-    status TEXT DEFAULT 'raw',          -- raw/extracted/failed
-    -- 结构化提取结果（提取后填充）
-    notice_type TEXT,                   -- competition/lecture/...
-    deadline TEXT,                      -- 截止时间（ISO 8601）
-    location TEXT,                      -- 地点
+    status TEXT DEFAULT 'raw',          -- raw/extracted/partial/failed
+    -- 结构化提取结果（M2 提取后填充）
+    notice_type TEXT,                   -- competition/lecture/registration/...
     target_audience TEXT,               -- 面向对象
-    registration_url TEXT,              -- 报名链接
+    signup_method TEXT,                 -- 报名方式（QQ群/邮箱/扫码描述，自由文本）
+    signup_url TEXT,                    -- 报名网页链接（仅当有真实 URL）
+    location TEXT,                      -- 地点
+    location_type TEXT,                 -- online/offline/hybrid
+    deadline TEXT,                      -- 截止时间（ISO 8601，解析器重算）
+    deadline_raw TEXT,                  -- 截止时间原文片段（可溯源/校验）
+    key_dates_json TEXT,                -- 其他重要时间点（JSON 数组）
     summary TEXT,                       -- 摘要
     extracted_at TEXT                   -- 提取时间
 );
@@ -66,18 +70,54 @@ CREATE TABLE crawl_log (
 
 ```python
 from pydantic import BaseModel
+from typing import Literal, Optional
+
+# 通知类型枚举（10 类）
+NoticeType = Literal[
+    "competition",   # 竞赛
+    "lecture",       # 讲座
+    "registration",  # 报名/培训/选课
+    "scholarship",   # 奖学金
+    "administrative",# 行政事务（放假/注册/缴费）
+    "recruitment",   # 招聘/实习
+    "policy",        # 政策/资讯
+    "result",        # 结果公示
+    "news",          # 动态/新闻
+    "other",         # 其他
+]
+
+class KeyDate(BaseModel):
+    """一个重要的日期/时间点（如报名截止、初赛、决赛）。"""
+    label: str             # 时间点含义，如"报名截止""初赛"
+    date_raw: str          # 原文时间片段，如"5月23日12:00-17:00"
+    datetime: str | None   # 规范化 ISO 8601（后处理填充）
 
 class NoticeExtraction(BaseModel):
-    """LLM 结构化提取的输出"""
+    """LLM 结构化提取输出"""
+    notice_type: NoticeType
     title: str
-    notice_type: str  # competition/lecture/registration/scholarship/administrative/recruitment/other
-    deadline: str | None  # ISO 8601，无则 None
-    location: str | None
-    target_audience: str | None
-    registration_url: str | None
-    summary: str
-    key_dates: list[str]  # 其他重要日期
+    target_audience: str | None = None
+    signup_method: str | None = None   # 报名方式自由文本（QQ群/邮箱/扫码）
+    signup_url: str | None = None      # 报名网页链接（仅当有真实 URL）
+    location: str | None = None
+    location_type: Literal["online", "offline", "hybrid"] | None = None
+    deadline_raw: str | None = None    # 截止时间原文片段（防幻觉/可校验）
+    deadline: str | None = None        # ISO 8601（Python 解析器以 deadline_raw 重算为准）
+    key_dates: list[KeyDate] = []
+    summary: str | None = None
 ```
+
+> **设计要点**
+> - `deadline_raw` + `deadline` 双字段：LLM 只负责从原文中定位时间片段，
+>   年份推断与 ISO 规范化由 `core/date_utils.py` 的解析器完成（比 LLM 直接
+>   输出 ISO 更可靠，且可校验防幻觉）。无年份时用 `published_at` 年份，早于
+>   发布日则用下一年。
+> - `signup_method` 为自由文本：真实通知里 QQ 群号、邮箱、扫码占绝大多数，
+>   URL 是少数，所以单独一个 URL 字段不够。
+> - 状态三态：`extracted`（行动型且有行动字段）/ `partial`（政策/新闻/结果公示等
+>   非行动型，无行动字段）/ `failed`（LLM 调用本身失败）。
+> - 行动型类型 = competition/lecture/registration/scholarship/administrative/recruitment；
+>   非行动型 = policy/result/news/other。
 
 ### 2.2 待办项
 
@@ -104,7 +144,8 @@ class NoticeCard(BaseModel):
     deadline: str | None
     location: str | None
     target_audience: str | None
-    registration_url: str | None
+    signup_method: str | None
+    signup_url: str | None
     summary: str
     published_at: str | None
     source: str

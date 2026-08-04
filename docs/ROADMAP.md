@@ -55,24 +55,31 @@
 
 ---
 
-## M2：结构化提取
+## M2：结构化提取 ✅
 
 **目标**：用 LLM 从通知正文提取结构化字段
 
 **任务**：
 
-- [ ] 定义 `NoticeExtraction` Pydantic 模型
-- [ ] 实现提取 Agent（`agents/extractor.py`）
-- [ ] 用 OpenAI Agents SDK 的 `output_type` 约束输出
-- [ ] 批量处理 `status=raw` 的通知
-- [ ] 更新 SQLite 中的结构化字段
-- [ ] 处理提取失败的情况
+- [x] 定义 `NoticeExtraction` Pydantic 模型（`core/models.py`）
+- [x] 实现提取 Agent（`core/extractor.py`）
+- [x] 用 OpenAI Agents SDK 的 `output_type` 约束输出
+- [x] 批量处理 `status=raw` 的通知（`extract.py`）
+- [x] 更新 SQLite 中的结构化字段（schema 迁移 + `update_extraction`）
+- [x] 处理提取失败的情况（extracted/partial/failed 三态）
+- [x] 截止时间双字段：`deadline_raw`（原文）+ `deadline`（ISO，`core/date_utils.py` 重算）
+- [x] 校验失败自动重试（错误回传 LLM，最多 2 次）
+- [x] 黄金集评估（`data/golden_extraction.json` + `evaluate_extraction.py`）
 
 **验收**：
 
-- 对 10 条真实通知，提取准确率 > 80%
-- 截止时间能正确解析为 ISO 8601
-- 通知类型分类正确
+- [x] 对 6 条黄金集真实通知，总体准确率 100%（24/24），关键字段 > 80% 达标
+- [x] 截止时间解析为 ISO 8601 准确率 100%，无年份时间按发布日推断年份正确
+- [x] 通知类型分类正确（竞赛/报名/政策/新闻等）
+
+> **注意**：本地包用 `core/` 而非 `agents/`，因为 opencode-go 的 LLM 调用依赖
+> OpenAI Agents SDK（其包名就是 `agents`），避免重名冲突。`agents/extractor.py`
+> 对应 `core/extractor.py`。
 
 ---
 

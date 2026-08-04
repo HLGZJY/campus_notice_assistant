@@ -49,15 +49,20 @@ pip install -r requirements.txt
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入 opencode-go API key
+# 编辑 .env 填入 opencode-go API key（OPENCODE_API_KEY / OPENCODE_BASE_URL / LLM_MODEL）
 
 # 3. 初始化数据库
 python -m campus_assistant.init_db
 
 # 4. 抓取通知（首次）
 python -m campus_assistant.crawler
+# 或： python crawl.py
 
-# 5. 启动应用
+# 5. 结构化提取（M2）
+python extract.py                  # 批量提取 status=raw 的通知
+python evaluate_extraction.py      # 用黄金集评估提取准确率
+
+# 6. 启动应用
 streamlit run app.py
 ```
 
