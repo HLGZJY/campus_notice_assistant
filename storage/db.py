@@ -101,6 +101,12 @@ def get_notice_by_url(conn: sqlite3.Connection, url: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def get_notice_by_id(conn: sqlite3.Connection, notice_id: int) -> Optional[dict]:
+    """按 ID 查询通知，返回 dict 或 None。"""
+    row = conn.execute("SELECT * FROM notices WHERE id = ?", (notice_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def update_notice_date(conn: sqlite3.Connection, url: str, published_at: str) -> bool:
     """更新已有记录的 published_at 字段。"""
     conn.execute("UPDATE notices SET published_at = ? WHERE url = ?", (published_at, url))
