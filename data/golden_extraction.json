@@ -1,0 +1,55 @@
+{
+  "说明": "M2 验收黄金集：从真实抓取的通知中人工标注期望提取结果。",
+  "entries": [
+    {
+      "title": "关于启动2026年全国大学生数学建模竞赛暑期培训报名的通知",
+      "expected": {
+        "notice_type": ["registration"],
+        "deadline_date": "2026-07-16",
+        "target_contains": ["本科生"],
+        "signup_keywords": ["腾讯文档", "扫描"]
+      }
+    },
+    {
+      "title": "关于举办第十三届“学创杯”全国大学生创业综合模拟大赛中南民族大学校赛选拔的通知",
+      "expected": {
+        "notice_type": ["competition"],
+        "deadline_date": "2026-05-03",
+        "target_contains": ["本科生", "研究生"],
+        "signup_keywords": ["邮箱"]
+      }
+    },
+    {
+      "title": "ICPC大学生程序设计竞赛校赛的通知",
+      "expected": {
+        "notice_type": ["competition"],
+        "deadline_date": "2026-05-09",
+        "target_contains": ["本科生"],
+        "signup_keywords": ["QQ群"]
+      }
+    },
+    {
+      "title": "关于举办2026年全国企业竞争模拟大赛中南民族大学选拔赛的通知",
+      "expected": {
+        "notice_type": ["competition"],
+        "deadline_date": "2026-03-18",
+        "target_contains": ["本科生", "研究生"],
+        "signup_keywords": ["ibizsim", "注册"]
+      }
+    },
+    {
+      "title": "湖北武汉：“青创贷” 发放超过40亿！为在汉青年点亮创业路",
+      "expected": {
+        "notice_type": ["news", "policy"],
+        "deadline_date": null
+      }
+    },
+    {
+      "title": "湖北省就业创业主要政策清单",
+      "expected": {
+        "notice_type": ["policy"],
+        "deadline_date": null
+      }
+    }
+  ]
+}

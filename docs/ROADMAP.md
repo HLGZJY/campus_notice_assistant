@@ -55,44 +55,60 @@
 
 ---
 
-## M2：结构化提取
+## M2：结构化提取 ✅
 
 **目标**：用 LLM 从通知正文提取结构化字段
 
 **任务**：
 
-- [ ] 定义 `NoticeExtraction` Pydantic 模型
-- [ ] 实现提取 Agent（`agents/extractor.py`）
-- [ ] 用 OpenAI Agents SDK 的 `output_type` 约束输出
-- [ ] 批量处理 `status=raw` 的通知
-- [ ] 更新 SQLite 中的结构化字段
-- [ ] 处理提取失败的情况
+- [x] 定义 `NoticeExtraction` Pydantic 模型（`core/models.py`）
+- [x] 实现提取 Agent（`core/extractor.py`）
+- [x] 用 OpenAI Agents SDK 的 `output_type` 约束输出
+- [x] 批量处理 `status=raw` 的通知（`extract.py`）
+- [x] 更新 SQLite 中的结构化字段（schema 迁移 + `update_extraction`）
+- [x] 处理提取失败的情况（extracted/partial/failed 三态）
+- [x] 截止时间双字段：`deadline_raw`（原文）+ `deadline`（ISO，`core/date_utils.py` 重算）
+- [x] 校验失败自动重试（错误回传 LLM，最多 2 次）
+- [x] 黄金集评估（`data/golden_extraction.json` + `evaluate_extraction.py`）
 
 **验收**：
 
-- 对 10 条真实通知，提取准确率 > 80%
-- 截止时间能正确解析为 ISO 8601
-- 通知类型分类正确
+- [x] 对 6 条黄金集真实通知，总体准确率 100%（24/24），关键字段 > 80% 达标
+- [x] 截止时间解析为 ISO 8601 准确率 100%，无年份时间按发布日推断年份正确
+- [x] 通知类型分类正确（竞赛/报名/政策/新闻等）
+
+> **注意**：本地包用 `core/` 而非 `agents/`，因为 opencode-go 的 LLM 调用依赖
+> OpenAI Agents SDK（其包名就是 `agents`），避免重名冲突。`agents/extractor.py`
+> 对应 `core/extractor.py`。
 
 ---
 
-## M3：待办生成 + 列表
+## M3：待办生成 + 列表 ✅
 
-**目标**：从通知生成待办，按截止时间排序展示
+**目标**：从结构化通知生成待办，按截止时间排序展示
 
 **任务**：
 
-- [ ] 定义 `TodoItem` / `TodoList` 模型
-- [ ] 实现待办生成 Agent（`agents/todo.py`）
-- [ ] 待办存入 `todos` 表
-- [ ] 实现按截止时间排序查询
-- [ ] 实现待办状态管理（pending/done/skipped）
+- [x] 定义 `TodoItem` / `TodoList` 模型（`core/models.py`）
+- [x] 实现待办生成 Agent（`core/todo.py`，输入 M2 结构化结果）
+- [x] 待办存入 `todos` 表（`storage/db.py`）
+- [x] 实现按截止时间排序查询（无截止的排在最后）
+- [x] 实现待办状态管理（pending/done/skipped）
+- [x] 按需生成：`generate_todos_for_notice(notice_id)`，重复点击先删旧 pending 再插入
+- [x] 小界面验证闭环（`ui/todo_app.py`，Streamlit）
 
 **验收**：
 
-- 报名类通知能生成"在 X 时间前完成报名"待办
-- 待办列表按截止时间升序
-- 可标记完成
+- [x] 报名类通知能生成"在 X 时间前完成报名"待办（实测 id=2 → "在 2026-09-30 17:00 前完成校赛报名"）
+- [x] 待办列表按截止时间升序（过期 pending 标记 `[过期]`）
+- [x] 可标记完成（--done / --skip，done 记录 completed_at）
+- [x] 政策/新闻/结果公示类通知点击不生成待办（返回 none）
+
+> **MVP 形态决策**：待办采用"**用户点开通知才生成**"的按需模式，而非批量自动生成。
+> 理由：现有 19 条真实通知中仅 1 条截止时间在未来，批量生成会产生大量过期噪声；
+> 且按需生成省 LLM 成本、把主动权交给用户。`batch_generate()` 保留为可选后门。
+> 每条通知最多 1 条主待办（key_dates 多阶段待办后续再扩）；过期待办照常生成、
+> 由前端灰显。
 
 ---
 

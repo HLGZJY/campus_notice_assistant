@@ -31,6 +31,74 @@ from .base import ListPageConfig, ListPageParser, PageFetcher
 logger = logging.getLogger(__name__)
 
 
+def fetch_notice_detail(
+    url: str,
+    source_name: str,
+    fallback_title: str = "",
+    list_page_date: Optional[str] = None,
+) -> Optional[NoticeRecord]:
+    """抓取单条通知详情页，返回 NoticeRecord（可复用的模块级函数）。
+
+    Args:
+        url: 详情页 URL
+        source_name: 来源名称（存入 DB）
+        fallback_title: 兜底标题
+        list_page_date: 列表页提取的日期（newspaper4k 失败时使用）
+    """
+    fetcher = PageFetcher()
+    try:
+        article = newspaper.article(url, language="zh")
+        title = article.title or fallback_title
+        content = article.text or ""
+
+        if not content:
+            content = _fallback_extract_from_url(url, fetcher)
+
+        published_at = None
+        if article.publish_date:
+            published_at = article.publish_date.isoformat()
+        elif list_page_date:
+            published_at = list_page_date
+
+        return NoticeRecord(
+            url=url,
+            source=source_name,
+            title=title,
+            raw_content=content,
+            published_at=published_at,
+        )
+    except Exception as e:
+        logger.warning(f"newspaper4k 提取失败 {url}: {e}")
+        try:
+            html = fetcher.fetch(url)
+            content = _fallback_extract_from_html(html)
+            return NoticeRecord(
+                url=url,
+                source=source_name,
+                title=fallback_title,
+                raw_content=content,
+                published_at=list_page_date,
+            )
+        except Exception:
+            return None
+
+
+def _fallback_extract_from_url(url: str, fetcher: PageFetcher) -> str:
+    """newspaper4k 失败时的 fallback 提取。"""
+    html = fetcher.fetch(url)
+    return _fallback_extract_from_html(html)
+
+
+def _fallback_extract_from_html(html: str) -> str:
+    """从 HTML 提取纯文本（fallback）。"""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+    return soup.get_text(separator="\n", strip=True)
+
+
 class WebCrawler:
     """网页爬虫：抓取列表页所有通知，存入 SQLite。
 
@@ -104,7 +172,9 @@ class WebCrawler:
                     continue
 
                 try:
-                    record = self._fetch_detail(url, item.title, item.published_at)
+                    record = fetch_notice_detail(
+                        url, self.config.source_name, item.title, item.published_at
+                    )
                     if record:
                         insert_notice(conn, record)
                         result.total_new += 1
@@ -127,67 +197,3 @@ class WebCrawler:
             conn.close()
 
         return result
-
-    def _fetch_detail(
-        self, url: str, fallback_title: str, list_page_date: Optional[str] = None
-    ) -> Optional[NoticeRecord]:
-        """用 newspaper4k 抓取详情页，返回 NoticeRecord。
-
-        Args:
-            url: 详情页 URL
-            fallback_title: 列表页提取的标题（newspaper4k 失败时使用）
-            list_page_date: 列表页提取的日期（newspaper4k 失败时使用）
-        """
-        try:
-            article = newspaper.article(url, language="zh")
-            title = article.title or fallback_title
-            content = article.text or ""
-
-            if not content:
-                # newspaper4k 提取失败，用 fallback
-                content = self._fallback_extract(url)
-
-            # newspaper4k 日期优先，列表页日期作为 fallback
-            published_at = None
-            if article.publish_date:
-                published_at = article.publish_date.isoformat()
-            elif list_page_date:
-                published_at = list_page_date
-
-            return NoticeRecord(
-                url=url,
-                source=self.config.source_name,
-                title=title,
-                raw_content=content,
-                published_at=published_at,
-            )
-        except Exception as e:
-            logger.warning(f"newspaper4k 提取失败 {url}: {e}")
-            # fallback：用 BeautifulSoup 提取
-            try:
-                html = self.fetcher.fetch(url)
-                content = self._fallback_extract_from_html(html)
-                return NoticeRecord(
-                    url=url,
-                    source=self.config.source_name,
-                    title=fallback_title,
-                    raw_content=content,
-                    published_at=list_page_date,
-                )
-            except Exception:
-                return None
-
-    def _fallback_extract(self, url: str) -> str:
-        """newspaper4k 失败时的 fallback 提取。"""
-        html = self.fetcher.fetch(url)
-        return self._fallback_extract_from_html(html)
-
-    def _fallback_extract_from_html(self, html: str) -> str:
-        """从 HTML 提取纯文本（fallback）。"""
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(html, "html.parser")
-        # 移除不需要的标签
-        for tag in soup.find_all(["script", "style", "nav", "footer", "header"]):
-            tag.decompose()
-        return soup.get_text(separator="\n", strip=True)
