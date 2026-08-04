@@ -80,3 +80,25 @@ class NoticeExtraction(BaseModel):
             or self.signup_url
             or self.location
         )
+
+
+class TodoItem(BaseModel):
+    """一条待办（M3）。"""
+
+    action: str  # 待办内容，如"在 2026-09-30 17:00 前完成工创大赛校赛报名"
+    due_at: Optional[str] = None  # 截止时间 ISO 8601（复用 notice.deadline）
+    priority: str = "normal"  # high / normal / low
+
+    @field_validator("action")
+    @classmethod
+    def _action_not_empty(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("待办内容不能为空")
+        return v
+
+
+class TodoList(BaseModel):
+    """待办清单（LLM 输出）。"""
+
+    items: list[TodoItem] = Field(default_factory=list)

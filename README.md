@@ -62,7 +62,12 @@ python -m campus_assistant.crawler
 python extract.py                  # 批量提取 status=raw 的通知
 python evaluate_extraction.py      # 用黄金集评估提取准确率
 
-# 6. 启动应用
+# 6. 待办生成（M3）
+python todo.py --notice 2          # 按需生成某通知的待办
+python todo.py --list              # 待办清单（按截止升序）
+streamlit run ui/todo_app.py       # M3 小界面：点按钮生成待办
+
+# 7. 启动应用
 streamlit run app.py
 ```
 

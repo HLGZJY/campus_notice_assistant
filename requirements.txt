@@ -1,0 +1,15 @@
+# 抓取（M1）
+newspaper4k>=0.9.6
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+PyYAML>=6.0
+
+# LLM 结构化提取（M2）
+openai-agents>=0.19
+pydantic>=2.8
+dateparser>=1.2
+python-dotenv>=1.0
+
+# 前端（M3 Demo / M5）
+streamlit>=1.40

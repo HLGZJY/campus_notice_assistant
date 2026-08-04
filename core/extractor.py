@@ -14,7 +14,14 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
-from agents import Agent, ModelSettings, Runner, set_default_openai_api, set_default_openai_client
+from agents import (
+    Agent,
+    ModelSettings,
+    Runner,
+    set_default_openai_api,
+    set_default_openai_client,
+    set_tracing_disabled,
+)
 from openai import AsyncOpenAI
 
 from core.date_utils import (
@@ -122,6 +129,7 @@ class NoticeExtractor:
 
     def _get_agent(self) -> Agent:
         if self._agent is None:
+            set_tracing_disabled(True)  # 不向 OpenAI 导出 trace
             client = AsyncOpenAI(
                 api_key=self.config.api_key,
                 base_url=self.config.base_url,

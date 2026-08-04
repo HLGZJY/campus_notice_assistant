@@ -33,6 +33,21 @@ CREATE TABLE IF NOT EXISTS crawl_log (
     errors TEXT,
     crawled_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notice_id INTEGER NOT NULL,          -- 关联通知
+    action TEXT NOT NULL,                -- 待办内容，如"在 X 前完成报名"
+    due_at TEXT,                         -- 截止时间（复用 notice.deadline）
+    priority TEXT DEFAULT 'normal',      -- high/normal/low
+    status TEXT DEFAULT 'pending',       -- pending/done/skipped
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (notice_id) REFERENCES notices(id)
+);
+CREATE INDEX IF NOT EXISTS idx_todos_notice ON todos(notice_id);
+CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
+CREATE INDEX IF NOT EXISTS idx_todos_due ON todos(due_at);
 """
 
 # M2 结构化提取新增列（对已存在的库做 ALTER 迁移）
@@ -182,6 +197,81 @@ def count_notices_by_status(conn: sqlite3.Connection) -> dict[str, int]:
         "SELECT status, COUNT(*) AS n FROM notices GROUP BY status"
     ).fetchall()
     return {r["status"]: r["n"] for r in rows}
+
+
+# ---------- todos（M3 待办） ----------
+
+
+def insert_todo(
+    conn: sqlite3.Connection,
+    notice_id: int,
+    action: str,
+    due_at: Optional[str] = None,
+    priority: str = "normal",
+) -> int:
+    """插入一条待办，返回新 id。"""
+    cur = conn.execute(
+        """INSERT INTO todos (notice_id, action, due_at, priority, status, created_at)
+           VALUES (?, ?, ?, ?, 'pending', ?)""",
+        (notice_id, action, due_at, priority, datetime.now().isoformat()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_todos(
+    conn: sqlite3.Connection,
+    status: Optional[str] = None,
+    notice_id: Optional[int] = None,
+) -> list[dict]:
+    """查询待办，按截止时间升序（无截止的排在最后）。带通知标题。"""
+    where: list[str] = []
+    params: list = []
+    if status:
+        where.append("t.status = ?")
+        params.append(status)
+    if notice_id is not None:
+        where.append("t.notice_id = ?")
+        params.append(notice_id)
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = conn.execute(
+        f"""SELECT t.*, n.title AS notice_title, n.notice_type
+            FROM todos t
+            LEFT JOIN notices n ON n.id = t.notice_id
+            {w}
+            ORDER BY t.due_at IS NULL, t.due_at ASC, t.id ASC""",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_todo_status(conn: sqlite3.Connection, todo_id: int, status: str) -> bool:
+    """更新待办状态（pending/done/skipped）。done 时记录 completed_at。"""
+    cur = conn.execute(
+        """UPDATE todos SET status = ?,
+               completed_at = CASE WHEN ? = 'done' THEN ? ELSE NULL END
+           WHERE id = ?""",
+        (status, status, datetime.now().isoformat(), todo_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def delete_todos_for_notice(
+    conn: sqlite3.Connection,
+    notice_id: int,
+    status: Optional[str] = None,
+) -> int:
+    """删除某通知的待办（按需重新生成前调用，防重复）。返回删除条数。"""
+    if status:
+        cur = conn.execute(
+            "DELETE FROM todos WHERE notice_id = ? AND status = ?",
+            (notice_id, status),
+        )
+    else:
+        cur = conn.execute("DELETE FROM todos WHERE notice_id = ?", (notice_id,))
+    conn.commit()
+    return cur.rowcount
 
 
 def log_crawl(
