@@ -298,3 +298,160 @@ def log_crawl(
         ),
     )
     conn.commit()
+
+
+# ---------- 单链接分析 & 浏览辅助 ----------
+
+
+def get_notice(conn: sqlite3.Connection, notice_id: int) -> Optional[dict]:
+    """按 ID 获取完整通知记录。"""
+    row = conn.execute("SELECT * FROM notices WHERE id = ?", (notice_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def save_notice_analysis(
+    conn: sqlite3.Connection,
+    record: NoticeRecord,
+    extraction: Optional[dict] = None,
+    status: str = "raw",
+) -> tuple[int, bool]:
+    """Insert 或 Update 通知（按 URL 去重），同时写入结构化提取结果。
+
+    Returns:
+        (notice_id, is_new) — is_new=True 表示新插入，False 表示更新已有记录
+    """
+    # 先查是否存在
+    existing = conn.execute("SELECT id FROM notices WHERE url = ?", (record.url,)).fetchone()
+    if existing:
+        notice_id = existing["id"]
+        # 更新 raw_content/published_at（若为空则补全）
+        conn.execute(
+            """UPDATE notices SET
+                   raw_content = COALESCE(?, raw_content),
+                   published_at = COALESCE(?, published_at),
+                   source = ?,
+                   title = ?,
+                   crawled_at = ?
+               WHERE id = ?""",
+            (
+                record.raw_content,
+                record.published_at,
+                record.source,
+                record.title,
+                record.crawled_at,
+                notice_id,
+            ),
+        )
+        is_new = False
+    else:
+        cur = conn.execute(
+            """INSERT INTO notices (url, source, title, raw_content, published_at, crawled_at, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record.url,
+                record.source,
+                record.title,
+                record.raw_content,
+                record.published_at,
+                record.crawled_at,
+                status,
+            ),
+        )
+        notice_id = cur.lastrowid
+        is_new = True
+
+    # 写入结构化提取结果
+    if extraction:
+        key_dates = extraction.get("key_dates") or []
+        conn.execute(
+            """UPDATE notices SET
+                   notice_type = ?,
+                   target_audience = ?,
+                   signup_method = ?,
+                   signup_url = ?,
+                   location = ?,
+                   location_type = ?,
+                   deadline = ?,
+                   deadline_raw = ?,
+                   key_dates_json = ?,
+                   summary = ?,
+                   status = ?,
+                   extracted_at = ?
+               WHERE id = ?""",
+            (
+                extraction.get("notice_type"),
+                extraction.get("target_audience"),
+                extraction.get("signup_method"),
+                extraction.get("signup_url"),
+                extraction.get("location"),
+                extraction.get("location_type"),
+                extraction.get("deadline"),
+                extraction.get("deadline_raw"),
+                json.dumps(key_dates, ensure_ascii=False) if key_dates else None,
+                extraction.get("summary"),
+                status,
+                datetime.now().isoformat(),
+                notice_id,
+            ),
+        )
+    else:
+        # 无提取结果时，仅更新 status（如 raw/failed）
+        conn.execute(
+            "UPDATE notices SET status = ?, extracted_at = ? WHERE id = ?",
+            (status, datetime.now().isoformat(), notice_id),
+        )
+
+    conn.commit()
+    return notice_id, is_new
+
+
+def search_notices(
+    conn: sqlite3.Connection,
+    keyword: Optional[str] = None,
+    notice_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict]:
+    """带筛选的通知查询（用于浏览页）。"""
+    where = []
+    params = []
+    if keyword:
+        where.append("(title LIKE ? OR raw_content LIKE ?)")
+        params.extend([f"%{keyword}%", f"%{keyword}%"])
+    if notice_type:
+        where.append("notice_type = ?")
+        params.append(notice_type)
+    if status:
+        where.append("status = ?")
+        params.append(status)
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"""SELECT * FROM notices {w} ORDER BY crawled_at DESC LIMIT ?""",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_notice_stats(conn: sqlite3.Connection) -> dict:
+    """获取通知统计：按类型、按状态计数。"""
+    by_type = conn.execute(
+        "SELECT notice_type, COUNT(*) AS n FROM notices WHERE notice_type IS NOT NULL GROUP BY notice_type ORDER BY n DESC"
+    ).fetchall()
+    by_status = conn.execute(
+        "SELECT status, COUNT(*) AS n FROM notices GROUP BY status ORDER BY n DESC"
+    ).fetchall()
+    total = conn.execute("SELECT COUNT(*) AS n FROM notices").fetchone()["n"]
+    return {
+        "total": total,
+        "by_type": {r["notice_type"]: r["n"] for r in by_type},
+        "by_status": {r["status"]: r["n"] for r in by_status},
+    }
+
+
+def get_crawl_logs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """获取最近的抓取日志。"""
+    rows = conn.execute(
+        "SELECT * FROM crawl_log ORDER BY crawled_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]

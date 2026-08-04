@@ -13,12 +13,12 @@
 - **多来源抓取**：学校官网、学院/部门网站、教务处通知、微信公众号
 - **结构化提取**：自动识别通知类型、截止时间、地点、报名链接、面向对象
 - **待办生成**：把通知转成可执行的待办项，支持提醒
-- **智能问答**：基于已抓取的通知回答自然语言问题（RAG）
+- **单链接分析**：粘贴任意校园通知详情链接，即时抓取、结构化、生成待办
 - **学校可配置**：通用架构，通过配置文件适配不同学校
 
 ## MVP 范围
 
-MVP 阶段先用 **中南民族大学 (scuec.edu.cn)** 验证，核心场景是 **结构化提取 + 待办生成**。
+MVP 阶段先用 **中南民族大学 (scuec.edu.cn)** 验证，核心场景是 **结构化提取 + 待办生成 + 单链接分析**。
 
 ## 文档导航
 
@@ -39,7 +39,7 @@ MVP 阶段先用 **中南民族大学 (scuec.edu.cn)** 验证，核心场景是 
 | Agent 框架 | OpenAI Agents SDK                      | Capstone 课程要求         |
 | 前端       | Streamlit                              | MVP 快速验证              |
 | 数据存储   | SQLite                                 | 轻量，单文件              |
-| 抓取       | requests + BeautifulSoup               | 通用网页抓取              |
+| 抓取       | newspaper4k + BeautifulSoup            | 通用网页抓取 + 结构化提取 |
 
 ## 快速开始
 
@@ -51,32 +51,52 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env 填入 opencode-go API key（OPENCODE_API_KEY / OPENCODE_BASE_URL / LLM_MODEL）
 
-# 3. 初始化数据库
-python -m campus_assistant.init_db
+# 3. 初始化数据库（自动建表、迁移）
+python -c "from storage.db import get_connection; get_connection(); print('DB ready')"
 
-# 4. 抓取通知（首次）
-python -m campus_assistant.crawler
-# 或： python crawl.py
-
-# 5. 结构化提取（M2）
-python extract.py                  # 批量提取 status=raw 的通知
-python evaluate_extraction.py      # 用黄金集评估提取准确率
-
-# 6. 待办生成（M3）
-python todo.py --notice 2          # 按需生成某通知的待办
-python todo.py --list              # 待办清单（按截止升序）
-streamlit run ui/todo_app.py       # M3 小界面：点按钮生成待办
-
-# 7. 启动应用
+# 4. 统一入口：启动 Web 应用（推荐）
 streamlit run app.py
+```
+
+### Web 应用功能（`streamlit run app.py`）
+
+| 模块 | 说明 |
+|------|------|
+| 📥 **单链接分析** | 粘贴通知详情链接 → 自动抓取正文 → LLM 结构化提取 → 结构化卡片展示 → 一键生成待办 |
+| 📋 **通知浏览** | 查看所有已抓取通知，支持类型/状态/关键词筛选，点开详情卡片 |
+| ✅ **待办清单** | 按截止时间排序，过期/即将到期高亮，完成/跳过管理 |
+| 🔄 **数据管理** | 手动刷新抓取配置源、批量提取待处理通知、查看抓取日志 |
+| 📤 **导出数据** | CSV / JSON / Markdown 导出通知数据 |
+
+### CLI 命令（依然可用）
+
+```bash
+# 抓取通知（M1）
+python crawl.py                          # 用默认配置抓取
+python crawl.py --list-url <URL>         # 抓取指定列表页
+
+# 批量结构化提取（M2）
+python extract.py                        # 提取所有 status=raw 的通知
+python extract.py --limit 10             # 最多提取 10 条
+python extract.py --status failed        # 重试提取失败的
+
+# 待办管理（M3）
+python todo.py --notice 2                # 为指定通知生成待办
+python todo.py --list                    # 列出全部待办（按截止升序）
+python todo.py --done 3                  # 标记完成
+python todo.py --skip 3                  # 标记跳过
 ```
 
 ## 项目状态
 
 - [x] 概念验证（RAG 与网页对话）— 已在 `Llama 3.1 本地 RAG` 项目完成
-- [ ] MVP 开发 — 进行中
-- [ ] 多学校适配
-- [ ] 主动推送提醒
+- [x] M1 抓取 + 存储
+- [x] M2 结构化提取
+- [x] M3 待办生成 + 列表
+- [x] 统一 Web 应用（单链接分析 + 浏览 + 待办 + 管理 + 导出）
+- [ ] M4 RAG 问答
+- [ ] M5 多学校适配
+- [ ] M6 主动推送提醒
 
 ## 关联项目
 

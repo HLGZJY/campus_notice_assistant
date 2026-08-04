@@ -8,24 +8,15 @@
     python extract.py --dry-run                # 只跑不写库
 """
 import argparse
-import asyncio
 import logging
-import sqlite3
 import sys
 from pathlib import Path
 
 # 确保包能正确导入
 sys.path.insert(0, str(Path(__file__).parent))
 
-from core.extractor import NoticeExtractor
-from core.models import NoticeExtraction
-from storage.db import (
-    count_notices_by_status,
-    get_connection,
-    get_notices_by_status,
-    mark_failed,
-    update_extraction,
-)
+from core.batch import run_batch_sync
+from storage.db import count_notices_by_status, get_connection, get_notices_by_status
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,57 +31,6 @@ def summarize(result: dict) -> None:
     for k, v in result.items():
         print(f"  {k}: {v}")
     print("========================\n")
-
-
-async def run_batch(
-    conn: sqlite3.Connection,
-    notices: list[dict],
-    dry_run: bool = False,
-    limit: int = 50,
-) -> dict:
-    """批量提取。"""
-    extractor = NoticeExtractor()
-    counter = {"成功(extracted)": 0, "部分(partial)": 0, "失败(failed)": 0}
-    samples: list[dict] = []
-
-    for i, n in enumerate(notices[:limit], start=1):
-        logger.info("[%d/%d] 提取: %s", i, len(notices[:limit]), n["title"])
-        outcome = await extractor.extract_one(
-            title=n["title"],
-            content=n["raw_content"] or "",
-            published_at=n["published_at"],
-            crawled_at=n["crawled_at"],
-        )
-        key = {"extracted": "成功(extracted)", "partial": "部分(partial)", "failed": "失败(failed)"}[
-            outcome.status
-        ]
-        counter[key] += 1
-        samples.append(
-            {
-                "id": n["id"],
-                "title": n["title"],
-                "status": outcome.status,
-                "notice_type": outcome.extraction.notice_type if outcome.extraction else None,
-                "deadline": outcome.extraction.deadline if outcome.extraction else None,
-                "error": outcome.error,
-            }
-        )
-
-        if not dry_run:
-            if outcome.status == "failed":
-                mark_failed(conn, n["id"], outcome.error or "")
-            elif outcome.extraction is not None:
-                update_extraction(
-                    conn,
-                    n["id"],
-                    outcome.extraction.model_dump(),
-                    outcome.status,
-                )
-
-        if outcome.error:
-            logger.warning("  注意: %s", outcome.error)
-
-    return {"明细": samples, **counter}
 
 
 def main():
@@ -116,7 +56,7 @@ def main():
             print("没有待提取的通知。")
             return
 
-        result = asyncio.run(run_batch(conn, notices, dry_run=args.dry_run, limit=args.limit))
+        result = run_batch_sync(notices, dry_run=args.dry_run, limit=args.limit)
 
         print("\n===== 单条明细 =====")
         for s in result["明细"]:
