@@ -18,7 +18,7 @@
 
 ## MVP 范围
 
-MVP 阶段先用 **中南民族大学 (scuec.edu.cn)** 验证，核心场景是 **结构化提取 + 待办生成**。
+MVP 阶段先用 **中南民族大学 (scuec.edu.cn)** 验证，核心场景是 **结构化提取 + 待办生成 + RAG 问答**。
 
 ## 文档导航
 
@@ -67,14 +67,19 @@ python todo.py --notice 2          # 按需生成某通知的待办
 python todo.py --list              # 待办清单（按截止升序）
 streamlit run ui/todo_app.py       # M3 小界面：点按钮生成待办
 
-# 7. 启动应用
+# 7. RAG 问答（M4）
+python index.py                    # 把已提取通知切分并索引到 Chroma
+python qa.py "最近有哪些比赛？"     # 单次问答
+python qa.py                        # 交互式问答
+
+# 8. 启动应用
 streamlit run app.py
 ```
 
 ## 项目状态
 
 - [x] 概念验证（RAG 与网页对话）— 已在 `Llama 3.1 本地 RAG` 项目完成
-- [ ] MVP 开发 — 进行中
+- [x] MVP 开发 — 已完成
 - [ ] 多学校适配
 - [ ] 主动推送提醒
 

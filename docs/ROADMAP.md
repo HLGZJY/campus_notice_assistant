@@ -112,23 +112,25 @@
 
 ---
 
-## M4：RAG 问答
+## M4：RAG 问答 ✅
 
 **目标**：基于已抓取通知回答自然语言问题
 
 **任务**：
 
-- [ ] 实现向量索引（`storage/vectorstore.py`）
-- [ ] 把已提取通知切分并索引到 Chroma
-- [ ] 实现问答 Agent（`agents/qa.py`）
-- [ ] 检索 Top-K 片段，拼接 Prompt
-- [ ] 回答时引用来源通知
+- [x] 实现向量索引（`storage/vectorstore.py`）
+- [x] 把已提取通知切分并索引到 Chroma
+- [x] 实现问答 Agent（`core/qa.py`，沿用 `agents/`→`core/` 重命名约定）
+- [x] 检索 Top-K 片段，拼接 Prompt
+- [x] 回答时引用来源通知
 
 **验收**：
 
-- 能回答"最近有哪些比赛？"
-- 回答包含来源通知标题
-- 复用 RAG 项目的 fallback embedding 逻辑
+- [x] 能回答"最近有哪些比赛？"
+- [x] 回答包含来源通知标题
+- [x] 复用 RAG 项目的 fallback embedding 逻辑（`OpenAIEmbeddings` → `HuggingFaceEmbeddings(all-MiniLM-L6-v2)`）
+
+> 实测：索引 27 条已提取通知，生成 110 个 chunk；问答可正确返回比赛列表并引用来源通知标题。
 
 ---
 

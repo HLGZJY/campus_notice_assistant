@@ -44,7 +44,8 @@ campus_assistant/
 │   ├── models.py        # NoticeExtraction / KeyDate / TodoItem 模型
 │   ├── date_utils.py    # 中文时间解析（deadline_raw -> ISO，年份推断）
 │   ├── extractor.py     # 提取 Agent（output_type + 校验重试）
-│   └── todo.py          # 待办生成 Agent（M3，按需 generate_todos_for_notice）
+│   ├── todo.py          # 待办生成 Agent（M3，按需 generate_todos_for_notice）
+│   └── qa.py            # RAG 问答 Agent（M4）
 ├── storage/             # 存储层
 │   ├── db.py            # SQLite 操作（含 M2 schema 迁移 + todos 表）
 │   ├── models.py        # 数据类模型
@@ -57,6 +58,8 @@ campus_assistant/
 ├── crawl.py             # M1 入口：抓取通知
 ├── extract.py           # M2 入口：批量结构化提取
 ├── todo.py              # M3 入口：待办生成/列表/状态管理
+├── index.py             # M4 入口：构建/更新 Chroma 向量索引
+├── qa.py                # M4 入口：RAG 问答
 ├── evaluate_extraction.py  # M2 验收：黄金集评估
 └── app.py               # 入口
 ```
@@ -169,11 +172,17 @@ extractor_agent = Agent(
 
 ### 5.2 问答 Agent
 
+实现文件：`core/qa.py`。流程：
+
+1. `VectorIndex.search(question)` 检索 Top-K 相关 chunk
+2. 按 `notice_id` 去重，编号 `[1]..[n]` 拼入 Prompt
+3. 调用 OpenAI Agents SDK 的 Agent 生成回答
+4. 来源通知从检索 metadata 确定性导出（标题 + URL），避免 LLM 幻觉引用
+
 ```python
 qa_agent = Agent(
     name="通知问答助手",
-    instructions="基于检索到的通知内容回答问题，引用来源",
-    tools=[search_notices_tool],
+    instructions="仅基于提供的参考通知回答问题，并用 [编号] 引用来源",
 )
 ```
 
