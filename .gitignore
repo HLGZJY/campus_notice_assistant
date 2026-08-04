@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 data/*.db
+data/chroma/
 *.log
 .env

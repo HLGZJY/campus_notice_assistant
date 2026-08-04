@@ -13,3 +13,13 @@ python-dotenv>=1.0
 
 # 前端（M3 Demo / M5）
 streamlit>=1.40
+
+# 向量索引 + RAG 问答（M4）
+chromadb>=0.6
+langchain>=0.3
+langchain-chroma>=0.2
+langchain_community>=0.3
+langchain_huggingface>=0.1
+langchain_openai>=0.3
+langchain_text_splitters>=0.3
+sentence-transformers>=3.0
