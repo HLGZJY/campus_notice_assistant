@@ -1,30 +1,28 @@
-"""校园通知助手 - 统一 Streamlit 应用（M1+M2+M3 整合）。
+"""校园通知助手 - 统一 Streamlit 应用。
 
 运行：
     streamlit run app.py
 
 功能模块：
-- 📥 单链接分析：粘贴通知详情链接 → 自动抓取正文 → LLM 结构化提取 → 结构化卡片展示 → 一键生成待办
-- 📋 通知浏览：查看所有已抓取通知，支持类型/状态/关键词筛选，点开详情卡片
-- ✅ 待办清单：按截止时间排序，过期/即将到期高亮，完成/跳过管理
-- 🔄 数据管理：手动刷新抓取配置源、批量提取待处理通知、查看抓取日志
-- 📤 导出：CSV / JSON / Markdown 导出通知数据
+- 📊 总览：紧急待办、最新通知、未处理通知、快速分析入口
+- 📬 通知中心：URL 分析 / 全部通知浏览 / 未处理筛选
+- 🎯 待办事项：按紧急程度分组（已过期 / 本周 / 更晚 / 已完成）
+- ⚙️ 设置与导出：抓取管理、批量提取、日志、数据导出
 """
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import streamlit as st
+import yaml
 
-# 确保能导入项目模块
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.analyze import analyze_notice_url
-from core.batch import run_batch_sync
-from core.models import ACTION_NOTICE_TYPES, NoticeExtraction
+from core.models import ACTION_NOTICE_TYPES
 from core.todo import generate_todos_for_notice
-from crawler.web_crawler import WebCrawler
 from crawler.base import ListPageConfig
+from crawler.web_crawler import WebCrawler
 from storage.db import (
     count_notices_by_status,
     get_connection,
@@ -32,9 +30,11 @@ from storage.db import (
     get_notice,
     get_notice_stats,
     get_notices_by_status,
+    get_todos,
+    get_urgent_todos,
     search_notices,
+    set_todo_status,
 )
-import yaml
 
 st.set_page_config(page_title="校园通知助手", layout="wide", initial_sidebar_state="expanded")
 
@@ -80,6 +80,10 @@ st.markdown(
 # ---------- 工具函数 ----------
 
 
+def _db():
+    return get_connection()
+
+
 def load_config():
     with open("config/scuec.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -107,7 +111,6 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
     has_extraction = extraction_fields["notice_type"] is not None
 
     with st.container(border=True):
-        # 标题行
         col_title, col_type = st.columns([5, 1])
         with col_title:
             st.markdown(f"### #{notice['id']} {notice['title']}")
@@ -115,7 +118,6 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
             if has_extraction:
                 st.markdown(badge_html(extraction_fields["notice_type"]), unsafe_allow_html=True)
 
-        # 元信息行
         meta_cols = st.columns(3)
         with meta_cols[0]:
             st.caption(f"来源: {notice['source']}")
@@ -127,10 +129,8 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
 
         if has_extraction:
             st.divider()
-            # 结构化字段展示
             rows = []
 
-            # 截止时间
             deadline = extraction_fields["deadline"]
             deadline_raw = extraction_fields["deadline_raw"]
             if deadline:
@@ -158,14 +158,12 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
                         f'<span class="field-value">{deadline_raw}</span></div>'
                     )
 
-            # 面向对象
             if extraction_fields["target_audience"]:
                 rows.append(
                     f'<div class="field-row"><span class="field-label">面向对象</span>'
                     f'<span class="field-value">{extraction_fields["target_audience"]}</span></div>'
                 )
 
-            # 报名方式
             if extraction_fields["signup_method"]:
                 rows.append(
                     f'<div class="field-row"><span class="field-label">报名方式</span>'
@@ -177,7 +175,6 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
                     f'<span class="field-value"><a href="{extraction_fields["signup_url"]}" target="_blank">{extraction_fields["signup_url"]}</a></span></div>'
                 )
 
-            # 地点
             if extraction_fields["location"]:
                 loc_type = extraction_fields["location_type"] or ""
                 rows.append(
@@ -185,7 +182,6 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
                     f'<span class="field-value">{extraction_fields["location"]} {f"({loc_type})" if loc_type else ""}</span></div>'
                 )
 
-            # 关键时间点
             if extraction_fields["key_dates_json"]:
                 import json
 
@@ -202,7 +198,6 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
                 except json.JSONDecodeError:
                     pass
 
-            # 摘要
             if extraction_fields["summary"]:
                 rows.append(
                     f'<div class="field-row"><span class="field-label">摘要</span>'
@@ -212,7 +207,6 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
             if rows:
                 st.markdown("".join(rows), unsafe_allow_html=True)
 
-        # 原文折叠
         with st.expander("📄 查看原文", expanded=False):
             st.text_area(
                 "原文内容",
@@ -223,11 +217,9 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
                 key=f"{key_prefix}_raw_{notice['id']}",
             )
 
-        # 动作按钮
         if show_actions and has_extraction:
             st.divider()
             btn_cols = st.columns([1, 1, 3])
-            # 生成待办
             if extraction_fields["notice_type"] in ACTION_NOTICE_TYPES:
                 if btn_cols[0].button("➕ 生成待办", key=f"{key_prefix}_gen_{notice['id']}", use_container_width=True):
                     with st.spinner("生成待办中..."):
@@ -242,11 +234,9 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
             else:
                 btn_cols[0].write("⚪ 非行动型通知，无待办")
 
-            # 原文链接
             if btn_cols[1].button("🔗 打开原文", key=f"{key_prefix}_open_{notice['id']}", use_container_width=True):
                 st.markdown(f"[在新标签页打开]({notice['url']})")
 
-            # 强制重新提取
             if btn_cols[2].button("🔄 重新提取", key=f"{key_prefix}_reextract_{notice['id']}", use_container_width=True):
                 with st.spinner("重新提取中..."):
                     result = analyze_notice_url(notice["url"], source_name=notice["source"], force=True)
@@ -257,160 +247,277 @@ def render_notice_card(notice: dict, show_actions: bool = True, key_prefix: str 
                     st.error(f"重新提取失败: {result.error}")
 
 
-# ---------- 页面：单链接分析 ----------
+def _render_todo_item(todo, key_prefix):
+    """渲染单条待办项。"""
+    today = datetime.now().date()
+    expired = False
+    due_soon = False
+    if todo["due_at"]:
+        try:
+            due_date = datetime.fromisoformat(todo["due_at"]).date()
+            expired = due_date < today
+            due_soon = not expired and (due_date - today).days <= 7
+        except ValueError:
+            pass
 
+    priority_cls = "high" if todo["priority"] == "high" else ""
+    status_cls = todo["status"]
 
-def page_single_analysis():
-    st.header("📥 单链接分析")
-    st.caption("粘贴校园通知详情页链接，自动抓取正文并进行结构化提取")
+    due_display = (todo["due_at"] or "-")[:16].replace("T", " ")
+    badge = ""
+    if expired and todo["status"] == "pending":
+        badge = " 🟥 **已过期**"
+    elif due_soon:
+        badge = " 🟨 **即将截止**"
 
-    col_url, col_btn = st.columns([4, 1])
-    with col_url:
-        url = st.text_input(
-            "通知详情页 URL",
-            placeholder="https://www.scuec.edu.cn/.../xxx.htm",
-            label_visibility="collapsed",
-        )
-    with col_btn:
-        force = st.checkbox("强制重新提取", value=False)
+    source_info = todo.get("notice_title") or f"#{todo.get('notice_id', '?')}"
 
-    if st.button("🔍 提取并结构化", type="primary", disabled=not url, use_container_width=True):
-        with st.spinner("正在抓取与提取..."):
-            result = analyze_notice_url(url, force=force)
-
-        if result.status == "failed":
-            st.error(f"❌ 失败: {result.error}")
-        elif result.status == "cached":
-            st.info("📋 已有缓存结果（未重新提取），如需重新分析请勾选“强制重新提取”")
-            notice = get_notice(get_connection(), result.notice_id)
-            render_notice_card(notice, key_prefix="single")
-        else:  # ok
-            st.success("✅ 提取完成")
-            notice = get_notice(get_connection(), result.notice_id)
-            render_notice_card(notice, key_prefix="single")
-
-
-# ---------- 页面：通知浏览 ----------
-
-
-def page_browse():
-    st.header("📋 通知浏览")
-
-    # 统计概览
-    stats = get_notice_stats(get_connection())
-    stat_cols = st.columns(4)
-    stat_cols[0].metric("总计", stats["total"])
-    stat_cols[1].metric("已提取", stats["by_status"].get("extracted", 0))
-    stat_cols[2].metric("部分提取", stats["by_status"].get("partial", 0))
-    stat_cols[3].metric("原始/失败", stats["by_status"].get("raw", 0) + stats["by_status"].get("failed", 0))
-
-    # 筛选器
-    with st.expander("🔍 筛选条件", expanded=True):
-        filter_cols = st.columns(4)
-        keyword = filter_cols[0].text_input("关键词搜索", placeholder="标题/内容关键词")
-        notice_type = filter_cols[1].selectbox(
-            "通知类型",
-            ["全部"] + list(ACTION_NOTICE_TYPES) + ["policy", "result", "news", "other"],
-        )
-        status = filter_cols[2].selectbox(
-            "提取状态",
-            ["全部", "extracted", "partial", "raw", "failed"],
-        )
-        limit = filter_cols[3].number_input("显示条数", 10, 500, 50, step=10)
-
-    notices = search_notices(
-        get_connection(),
-        keyword=keyword or None,
-        notice_type=notice_type if notice_type != "全部" else None,
-        status=status if status != "全部" else None,
-        limit=limit,
+    c1, c2, c3 = st.columns([6, 1, 1])
+    c1.markdown(
+        f'<div class="todo-item {priority_cls} {status_cls}">'
+        f"<strong>{todo['action']}</strong><br>"
+        f"<small>截止: {due_display}{badge} · 优先级: {todo['priority']} · 来源: {source_info}</small>"
+        f"</div>",
+        unsafe_allow_html=True,
     )
+    if todo["status"] == "pending":
+        if c2.button("✅", key=f"{key_prefix}_done_{todo['id']}", help="标记完成"):
+            set_todo_status(_db(), todo["id"], "done")
+            st.rerun()
+        if c3.button("⏭️", key=f"{key_prefix}_skip_{todo['id']}", help="跳过"):
+            set_todo_status(_db(), todo["id"], "skipped")
+            st.rerun()
+    else:
+        c2.markdown(f"`{todo['status']}`")
+        if c3.button("🔄", key=f"{key_prefix}_reopen_{todo['id']}", help="恢复为待办"):
+            set_todo_status(_db(), todo["id"], "pending")
+            st.rerun()
 
-    if not notices:
-        st.info("没有符合条件的通知")
-        return
 
-    st.write(f"共找到 {len(notices)} 条通知")
-
-    for n in notices:
-        render_notice_card(n, key_prefix="browse")
+# ---------- 页面：总览 ----------
 
 
-# ---------- 页面：待办清单 ----------
+def page_dashboard():
+    st.header("📊 总览")
+
+    conn = _db()
+    stats = get_notice_stats(conn)
+    pending_todos = get_todos(conn, status="pending")
+    urgent = get_urgent_todos(conn, days=7)
+    recent = search_notices(conn, limit=5)
+    unprocessed = search_notices(conn, status="raw", limit=5)
+    conn.close()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("通知总数", stats["total"])
+    c2.metric("待处理待办", len(pending_todos))
+    c3.metric("紧急待办", len(urgent))
+    c4.metric("未处理通知", stats["by_status"].get("raw", 0) + stats["by_status"].get("failed", 0))
+
+    st.divider()
+
+    if urgent:
+        st.subheader(f"🔴 紧急待办（{len(urgent)} 条）")
+        for t in urgent[:5]:
+            _render_todo_item(t, "dash_urgent")
+        if len(pending_todos) > len(urgent):
+            st.caption(f"还有 {len(pending_todos) - len(urgent)} 条非紧急待办 → 前往「待办事项」查看")
+    else:
+        st.info("🎉 没有紧急待办")
+
+    st.divider()
+    st.subheader("📰 最新通知")
+    if recent:
+        for n in recent:
+            render_notice_card(n, key_prefix="dash_recent")
+    else:
+        st.info("暂无通知，前往「通知中心」分析链接或抓取数据")
+
+    if unprocessed:
+        st.divider()
+        st.subheader(f"⚠️ 未处理通知（{stats['by_status'].get('raw', 0) + stats['by_status'].get('failed', 0)} 条）")
+        for n in unprocessed:
+            with st.container(border=True):
+                st.write(f"**{n['title']}**")
+                st.caption(f"{n['source']} · {n.get('published_at', '未知')[:10]}")
+        st.caption("前往「设置与导出 → 批量提取」处理这些通知")
 
 
-def page_todos():
-    st.header("✅ 待办清单")
+# ---------- 页面：通知中心 ----------
 
-    status_filter = st.radio("状态", ["全部", "pending", "done", "skipped"], horizontal=True, index=0)
-    todos = get_todos(
-        get_connection(),
-        status=status_filter if status_filter != "全部" else None,
-    )
 
-    if not todos:
-        st.info("暂无待办")
-        return
+def page_notifications():
+    st.header("📬 通知中心")
+
+    tab_analyze, tab_browse, tab_unprocessed = st.tabs(["🔍 分析链接", "📋 全部通知", "⚠️ 未处理"])
+
+    with tab_analyze:
+        st.subheader("粘贴通知链接，自动提取结构化信息")
+        col_url, col_opt = st.columns([4, 1])
+        with col_url:
+            url = st.text_input(
+                "URL",
+                placeholder="https://www.scuec.edu.cn/.../xxx.htm",
+                label_visibility="collapsed",
+            )
+        with col_opt:
+            force = st.checkbox("强制重新提取", value=False)
+
+        if st.button("🔍 分析", type="primary", disabled=not url, use_container_width=True):
+            with st.spinner("正在抓取与提取..."):
+                result = analyze_notice_url(url, force=force)
+            st.session_state["last_analysis"] = result
+
+        result = st.session_state.get("last_analysis")
+        if result:
+            if result.status == "failed":
+                st.error(f"❌ 分析失败: {result.error}")
+            elif result.status == "cached":
+                st.info('📋 显示缓存结果（勾选「强制重新提取」可重新分析）')
+                notice = get_notice(_db(), result.notice_id)
+                if notice:
+                    render_notice_card(notice, key_prefix="nc_single")
+            else:
+                st.success("✅ 分析完成")
+                notice = get_notice(_db(), result.notice_id)
+                if notice:
+                    render_notice_card(notice, key_prefix="nc_single")
+
+    with tab_browse:
+        conn = _db()
+        stats = get_notice_stats(conn)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("总计", stats["total"])
+        c2.metric("已提取", stats["by_status"].get("extracted", 0))
+        c3.metric("未处理", stats["by_status"].get("raw", 0) + stats["by_status"].get("failed", 0))
+
+        with st.expander("🔍 筛选", expanded=True):
+            fc1, fc2, fc3, fc4 = st.columns(4)
+            keyword = fc1.text_input("关键词", placeholder="搜索标题/内容")
+            notice_type = fc2.selectbox(
+                "类型",
+                ["全部"] + list(ACTION_NOTICE_TYPES) + ["policy", "result", "news", "other"],
+            )
+            status = fc3.selectbox("状态", ["全部", "extracted", "partial", "raw", "failed"])
+            limit = fc4.number_input("条数", 10, 500, 50, step=10)
+
+        notices = search_notices(
+            conn,
+            keyword=keyword or None,
+            notice_type=notice_type if notice_type != "全部" else None,
+            status=status if status != "全部" else None,
+            limit=limit,
+        )
+        conn.close()
+
+        if not notices:
+            st.info("没有符合条件的通知")
+        else:
+            st.write(f"共 {len(notices)} 条")
+            for n in notices:
+                render_notice_card(n, key_prefix="nc_browse")
+
+    with tab_unprocessed:
+        conn = _db()
+        raw_notices = search_notices(conn, status="raw", limit=100)
+        failed_notices = search_notices(conn, status="failed", limit=100)
+        conn.close()
+
+        all_unprocessed = raw_notices + failed_notices
+        if not all_unprocessed:
+            st.info("🎉 所有通知均已处理")
+        else:
+            st.write(f"共 {len(all_unprocessed)} 条未处理通知")
+            for n in all_unprocessed:
+                with st.container(border=True):
+                    st.write(f"**{n['title']}**")
+                    st.caption(f"{n['source']} · {n.get('published_at', '未知')[:10]} · 状态: {n['status']}")
+                    if st.button("🔄 重新提取", key=f"nc_reproc_{n['id']}"):
+                        with st.spinner("提取中..."):
+                            analyze_notice_url(n["url"], source_name=n["source"], force=True)
+                        st.success("完成")
+                        st.rerun()
+
+
+# ---------- 页面：待办事项 ----------
+
+
+def page_action_items():
+    st.header("🎯 待办事项")
+
+    conn = _db()
+    all_todos = get_todos(conn)
+    pending = [t for t in all_todos if t["status"] == "pending"]
+    done = [t for t in all_todos if t["status"] in ("done", "skipped")]
+    conn.close()
 
     today = datetime.now().date()
-    for t in todos:
-        expired = t["due_at"] and t["due_at"][:10] < today.isoformat() and t["status"] == "pending"
-        due_soon = t["due_at"] and not expired and (datetime.fromisoformat(t["due_at"]).date() - today).days <= 7
-        priority_cls = "high" if t["priority"] == "high" else ""
-        status_cls = t["status"]
-        if expired:
-            status_cls = "pending"
+    week_later = today + timedelta(days=7)
 
-        with st.container():
-            cols = st.columns([6, 1, 1, 1])
-            due_display = (t["due_at"] or "-")[:16].replace("T", " ")
-            badge = ""
-            if expired:
-                badge = " 🟥 **已过期**"
-            elif due_soon:
-                badge = " 🟨 **即将截止**"
-            cols[0].markdown(
-                f'<div class="todo-item {priority_cls} {status_cls}">'
-                f"<strong>{t['action']}</strong><br>"
-                f"<small>截止: {due_display}{badge} · 优先级: {t['priority']} · 来源: #{t.get('notice_id', '?')}</small>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-            if t["status"] == "pending":
-                if cols[1].button("✅ 完成", key=f"done_{t['id']}", use_container_width=True):
-                    set_todo_status(get_connection(), t["id"], "done")
-                    st.rerun()
-                if cols[2].button("⏭️ 跳过", key=f"skip_{t['id']}", use_container_width=True):
-                    set_todo_status(get_connection(), t["id"], "skipped")
-                    st.rerun()
+    overdue = []
+    this_week = []
+    upcoming = []
+    for t in pending:
+        if not t["due_at"]:
+            upcoming.append(t)
+            continue
+        try:
+            due_date = datetime.fromisoformat(t["due_at"]).date()
+            if due_date < today:
+                overdue.append(t)
+            elif due_date <= week_later:
+                this_week.append(t)
             else:
-                cols[1].markdown(f"`{t['status']}`")
-                if cols[2].button("🔄 恢复", key=f"reopen_{t['id']}", use_container_width=True):
-                    set_todo_status(get_connection(), t["id"], "pending")
-                    st.rerun()
+                upcoming.append(t)
+        except ValueError:
+            upcoming.append(t)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("待处理", len(pending))
+    c2.metric("已过期", len(overdue))
+    c3.metric("本周截止", len(this_week))
+    c4.metric("已完成/跳过", len(done))
+
+    st.divider()
+
+    if overdue:
+        st.subheader(f"🔴 已过期（{len(overdue)}）")
+        for t in overdue:
+            _render_todo_item(t, "ov")
+        st.divider()
+
+    if this_week:
+        st.subheader(f"🟡 本周截止（{len(this_week)}）")
+        for t in this_week:
+            _render_todo_item(t, "tw")
+        st.divider()
+
+    if upcoming:
+        st.subheader(f"🔵 更晚 / 无截止日期（{len(upcoming)}）")
+        for t in upcoming:
+            _render_todo_item(t, "up")
+        st.divider()
+
+    if not pending:
+        st.info("🎉 没有待处理事项")
+
+    if done:
+        with st.expander(f"✅ 已完成 / 已跳过（{len(done)}）"):
+            for t in done:
+                _render_todo_item(t, "dn")
 
 
-def get_todos(conn, status=None):
-    from storage.db import get_todos as _get_todos
-
-    return _get_todos(conn, status=status)
+# ---------- 页面：设置与导出 ----------
 
 
-def set_todo_status(conn, todo_id, status):
-    from storage.db import set_todo_status as _set_todo_status
+def page_settings():
+    st.header("⚙️ 设置与导出")
 
-    return _set_todo_status(conn, todo_id, status)
+    tab_crawl, tab_extract, tab_logs, tab_export = st.tabs(
+        ["📡 抓取管理", "🤖 批量提取", "📜 抓取日志", "📤 导出数据"]
+    )
 
-
-# ---------- 页面：数据管理 ----------
-
-
-def page_management():
-    st.header("🔄 数据管理")
-
-    tab_crawl, tab_extract, tab_logs = st.tabs(["📡 抓取配置源", "🤖 批量提取", "📜 抓取日志"])
-
-    # 抓取配置源
     with tab_crawl:
         st.subheader("手动触发抓取")
         config = load_config()
@@ -451,10 +558,9 @@ def page_management():
                     else:
                         st.info("预览：无新增内容")
 
-    # 批量提取
     with tab_extract:
         st.subheader("批量结构化提取")
-        conn = get_connection()
+        conn = _db()
         counts = count_notices_by_status(conn)
         conn.close()
         st.write(f"当前状态分布：{counts}")
@@ -463,7 +569,7 @@ def page_management():
             limit = st.number_input("最多处理条数", 10, 200, 50, step=10)
             if st.button("🚀 开始批量提取", type="primary", use_container_width=True):
                 with st.spinner("批量提取中...（每条约 3-8 秒）"):
-                    conn = get_connection()
+                    conn = _db()
                     notices = []
                     for st_status in ["raw", "failed", "partial"]:
                         notices.extend(get_notices_by_status(conn, st_status, limit=limit))
@@ -478,7 +584,6 @@ def page_management():
                             progress.progress(done / total)
                             status_text.text(f"已处理 {done}/{total}")
 
-                        # 用 run_batch_sync 的简化版，带进度回调
                         import asyncio
 
                         async def run_with_progress():
@@ -521,13 +626,14 @@ def page_management():
         else:
             st.info("没有待提取的通知（raw/failed/partial 均为 0）")
 
-    # 抓取日志
     with tab_logs:
         st.subheader("最近抓取日志")
-        logs = get_crawl_logs(get_connection(), limit=20)
+        logs = get_crawl_logs(_db(), limit=20)
         if logs:
             for log in logs:
-                with st.expander(f"{log['source']} · {log['crawled_at'][:19]} · 新增 {log['total_new']} · 失败 {log['total_failed']}"):
+                with st.expander(
+                    f"{log['source']} · {log['crawled_at'][:19]} · 新增 {log['total_new']} · 失败 {log['total_failed']}"
+                ):
                     st.write(f"发现: {log['total_discovered']}")
                     st.write(f"新增: {log['total_new']}")
                     st.write(f"跳过: {log['total_skipped']}")
@@ -538,112 +644,105 @@ def page_management():
         else:
             st.info("暂无抓取日志")
 
+    with tab_export:
+        st.subheader("导出通知数据")
+        conn = _db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT source FROM notices ORDER BY source")
+        sources = [row[0] for row in cursor.fetchall()]
 
-# ---------- 页面：导出 ----------
+        if not sources:
+            st.info("数据库为空，无数据可导出")
+            conn.close()
+            return
 
+        col_src, col_fmt = st.columns(2)
+        source_filter = col_src.selectbox("数据源", ["全部"] + sources)
+        export_fmt = col_fmt.selectbox("导出格式", ["CSV (Excel)", "JSON", "Markdown"])
 
-def page_export():
-    st.header("📤 导出通知数据")
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT source FROM notices ORDER BY source")
-    sources = [row[0] for row in cursor.fetchall()]
-
-    if not sources:
-        st.info("数据库为空，无数据可导出")
+        if source_filter == "全部":
+            cursor.execute(
+                "SELECT title, source, published_at, raw_content, url FROM notices ORDER BY published_at DESC"
+            )
+        else:
+            cursor.execute(
+                "SELECT title, source, published_at, raw_content, url FROM notices WHERE source = ? ORDER BY published_at DESC",
+                (source_filter,),
+            )
+        rows = cursor.fetchall()
         conn.close()
-        return
 
-    col_src, col_fmt = st.columns(2)
-    source_filter = col_src.selectbox("数据源", ["全部"] + sources)
-    export_fmt = col_fmt.selectbox("导出格式", ["CSV (Excel)", "JSON", "Markdown"])
+        if not rows:
+            st.info("没有可导出的数据")
+            return
 
-    if source_filter == "全部":
-        cursor.execute(
-            "SELECT title, source, published_at, raw_content, url FROM notices ORDER BY published_at DESC"
-        )
-    else:
-        cursor.execute(
-            "SELECT title, source, published_at, raw_content, url FROM notices WHERE source = ? ORDER BY published_at DESC",
-            (source_filter,),
-        )
-    rows = cursor.fetchall()
-    conn.close()
+        st.write(f"共 {len(rows)} 条数据")
 
-    if not rows:
-        st.info("没有可导出的数据")
-        return
+        if st.button("📥 生成并下载", type="primary", use_container_width=True):
+            import csv
+            import io
+            import json
 
-    st.write(f"共 {len(rows)} 条数据")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename_base = f"notices_{timestamp}"
 
-    if st.button("📥 生成并下载", type="primary", use_container_width=True):
-        from datetime import datetime
-        import csv
-        import json
-        import io
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename_base = f"notices_{timestamp}"
-
-        if export_fmt == "CSV (Excel)":
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerow(["标题", "来源", "发布日期", "内容", "链接"])
-            for title, source, pub, content, url in rows:
-                writer.writerow([title, source, pub or "", content or "", url])
-            data = output.getvalue().encode("utf-8-sig")
-            st.download_button(
-                "下载 CSV",
-                data=data,
-                file_name=f"{filename_base}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-        elif export_fmt == "JSON":
-            data_list = []
-            for title, source, pub, content, url in rows:
-                data_list.append(
-                    {"title": title, "source": source, "published_at": pub, "content": content, "url": url}
+            if export_fmt == "CSV (Excel)":
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerow(["标题", "来源", "发布日期", "内容", "链接"])
+                for title, source, pub, content, url in rows:
+                    writer.writerow([title, source, pub or "", content or "", url])
+                data = output.getvalue().encode("utf-8-sig")
+                st.download_button(
+                    "下载 CSV",
+                    data=data,
+                    file_name=f"{filename_base}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
                 )
-            data = json.dumps(data_list, ensure_ascii=False, indent=2).encode("utf-8")
-            st.download_button(
-                "下载 JSON",
-                data=data,
-                file_name=f"{filename_base}.json",
-                mime="application/json",
-                use_container_width=True,
-            )
-        else:  # Markdown
-            output = io.StringIO()
-            output.write(f"# 校园通知导出\n\n")
-            output.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            output.write(f"共 {len(rows)} 条通知\n\n")
-            output.write("---\n\n")
+            elif export_fmt == "JSON":
+                data_list = []
+                for title, source, pub, content, url in rows:
+                    data_list.append(
+                        {"title": title, "source": source, "published_at": pub, "content": content, "url": url}
+                    )
+                data = json.dumps(data_list, ensure_ascii=False, indent=2).encode("utf-8")
+                st.download_button(
+                    "下载 JSON",
+                    data=data,
+                    file_name=f"{filename_base}.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            else:
+                output = io.StringIO()
+                output.write("# 校园通知导出\n\n")
+                output.write(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                output.write(f"共 {len(rows)} 条通知\n\n")
+                output.write("---\n\n")
 
-            # 按来源分组
-            by_source = {}
-            for title, source, pub, content, url in rows:
-                by_source.setdefault(source, []).append((title, pub, content, url))
+                by_source = {}
+                for title, source, pub, content, url in rows:
+                    by_source.setdefault(source, []).append((title, pub, content, url))
 
-            for source, items in by_source.items():
-                output.write(f"## {source}\n\n")
-                for title, pub, content, url in items:
-                    date = pub or "未知日期"
-                    output.write(f"### [{date}] {title}\n\n")
-                    if content:
-                        output.write(f"{content[:500]}\n\n")
-                    output.write(f"[原文链接]({url})\n\n")
-                    output.write("---\n\n")
+                for source, items in by_source.items():
+                    output.write(f"## {source}\n\n")
+                    for title, pub, content, url in items:
+                        date = pub or "未知日期"
+                        output.write(f"### [{date}] {title}\n\n")
+                        if content:
+                            output.write(f"{content[:500]}\n\n")
+                        output.write(f"[原文链接]({url})\n\n")
+                        output.write("---\n\n")
 
-            data = output.getvalue().encode("utf-8")
-            st.download_button(
-                "下载 Markdown",
-                data=data,
-                file_name=f"{filename_base}.md",
-                mime="text/markdown",
-                use_container_width=True,
-            )
+                data = output.getvalue().encode("utf-8")
+                st.download_button(
+                    "下载 Markdown",
+                    data=data,
+                    file_name=f"{filename_base}.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
 
 
 # ---------- 主入口 ----------
@@ -651,33 +750,28 @@ def page_export():
 
 def main():
     st.sidebar.title("📚 校园通知助手")
-    st.sidebar.caption("M1+M2+M3 整合版")
 
     page = st.sidebar.radio(
-        "功能模块",
+        "导航",
         [
-            "📥 单链接分析",
-            "📋 通知浏览",
-            "✅ 待办清单",
-            "🔄 数据管理",
-            "📤 导出数据",
+            "📊 总览",
+            "📬 通知中心",
+            "🎯 待办事项",
+            "⚙️ 设置与导出",
         ],
     )
 
-    if page == "📥 单链接分析":
-        page_single_analysis()
-    elif page == "📋 通知浏览":
-        page_browse()
-    elif page == "✅ 待办清单":
-        page_todos()
-    elif page == "🔄 数据管理":
-        page_management()
-    elif page == "📤 导出数据":
-        page_export()
+    if page == "📊 总览":
+        page_dashboard()
+    elif page == "📬 通知中心":
+        page_notifications()
+    elif page == "🎯 待办事项":
+        page_action_items()
+    elif page == "⚙️ 设置与导出":
+        page_settings()
 
     st.sidebar.divider()
     st.sidebar.caption("数据来源: 中南民族大学配置源")
-    st.sidebar.caption("LLM: opencode-go (Kimi K2.7 Code)")
 
 
 if __name__ == "__main__":

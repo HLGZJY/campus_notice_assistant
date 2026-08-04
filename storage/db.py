@@ -449,6 +449,24 @@ def get_notice_stats(conn: sqlite3.Connection) -> dict:
     }
 
 
+def get_urgent_todos(conn: sqlite3.Connection, days: int = 7) -> list[dict]:
+    """Get pending todos that are overdue or due within N days."""
+    from datetime import datetime, timedelta
+
+    cutoff = (datetime.now() + timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        """SELECT t.*, n.title AS notice_title, n.notice_type
+           FROM todos t
+           LEFT JOIN notices n ON n.id = t.notice_id
+           WHERE t.status = 'pending'
+             AND t.due_at IS NOT NULL
+             AND t.due_at <= ?
+           ORDER BY t.due_at ASC""",
+        (cutoff,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_crawl_logs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
     """获取最近的抓取日志。"""
     rows = conn.execute(
