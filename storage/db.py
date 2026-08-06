@@ -205,6 +205,59 @@ def count_notices_by_status(conn: sqlite3.Connection) -> dict[str, int]:
     return {r["status"]: r["n"] for r in rows}
 
 
+# ---------- 通知管理（M6 CRUD） ----------
+
+
+def get_notice_ids_by_source(conn: sqlite3.Connection, source: str) -> list[int]:
+    """返回某来源下所有通知 ID。"""
+    rows = conn.execute("SELECT id FROM notices WHERE source = ?", (source,)).fetchall()
+    return [r["id"] for r in rows]
+
+
+def get_notice_ids_by_status(conn: sqlite3.Connection, status: str) -> list[int]:
+    """返回某状态下所有通知 ID。"""
+    rows = conn.execute("SELECT id FROM notices WHERE status = ?", (status,)).fetchall()
+    return [r["id"] for r in rows]
+
+
+def delete_notice(conn: sqlite3.Connection, notice_id: int) -> int:
+    """删除单条通知及其关联待办。返回删除条数。"""
+    conn.execute("DELETE FROM todos WHERE notice_id = ?", (notice_id,))
+    cur = conn.execute("DELETE FROM notices WHERE id = ?", (notice_id,))
+    conn.commit()
+    return cur.rowcount
+
+
+def delete_notices_by_source(conn: sqlite3.Connection, source: str) -> tuple[list[int], int]:
+    """按来源批量删除通知。返回 (被删 ID 列表, 删除条数)。"""
+    ids = get_notice_ids_by_source(conn, source)
+    for nid in ids:
+        conn.execute("DELETE FROM todos WHERE notice_id = ?", (nid,))
+    cur = conn.execute("DELETE FROM notices WHERE source = ?", (source,))
+    conn.commit()
+    return ids, cur.rowcount
+
+
+def delete_notices_by_status(conn: sqlite3.Connection, status: str) -> tuple[list[int], int]:
+    """按状态批量删除通知。返回 (被删 ID 列表, 删除条数)。"""
+    ids = get_notice_ids_by_status(conn, status)
+    for nid in ids:
+        conn.execute("DELETE FROM todos WHERE notice_id = ?", (nid,))
+    cur = conn.execute("DELETE FROM notices WHERE status = ?", (status,))
+    conn.commit()
+    return ids, cur.rowcount
+
+
+def reset_notice_status(conn: sqlite3.Connection, notice_id: int, status: str = "raw") -> bool:
+    """重置通知状态（用于重新提取）。"""
+    cur = conn.execute(
+        "UPDATE notices SET status = ? WHERE id = ?",
+        (status, notice_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 # ---------- todos（M3 待办） ----------
 
 

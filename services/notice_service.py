@@ -4,11 +4,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Optional
 
-import yaml
-
+from config.schema import SourceConfig
+from config.store import ConfigStore
 from core.extractor import NoticeExtractor
 from core.models import ACTION_NOTICE_TYPES
 from crawler import ListPageConfig, WebCrawler
@@ -30,25 +29,18 @@ def _get_vector_index():
     return VectorIndex()
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "scuec.yaml"
+def get_school_config():
+    """获取当前活跃学校的数据源配置（来自 ConfigStore）。"""
+    return ConfigStore.get_instance().get_school()
 
 
-def load_config(config_path: Optional[Path] = None) -> dict:
-    """加载学校配置文件（默认 config/scuec.yaml）。"""
-    path = config_path or DEFAULT_CONFIG_PATH
-    if not path.exists():
-        raise FileNotFoundError(f"配置文件不存在: {path}")
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def crawl_source(source_cfg: dict) -> dict:
+def crawl_source(source_cfg: SourceConfig) -> dict:
     """抓取单个数据源，返回结构化结果字典。"""
     cfg = ListPageConfig(
-        list_url=source_cfg["list_url"],
-        source_name=source_cfg.get("name", ""),
-        url_pattern=source_cfg.get("url_pattern"),
-        max_pages=source_cfg.get("max_pages", 20),
+        list_url=source_cfg.list_url,
+        source_name=source_cfg.name,
+        url_pattern=source_cfg.url_pattern,
+        max_pages=source_cfg.max_pages,
     )
     crawler = WebCrawler(config=cfg)
     result = crawler.crawl()
@@ -62,17 +54,17 @@ def crawl_source(source_cfg: dict) -> dict:
     }
 
 
-def crawl_all_sources(config_path: Optional[Path] = None) -> dict:
+def crawl_all_sources() -> dict:
     """按配置文件抓取所有数据源。返回 {source_name: result_dict}。"""
-    config = load_config(config_path)
+    school_config = get_school_config()
     results = {}
-    for source in config.get("sources", []):
+    for source in school_config.sources:
         try:
-            results[source["name"]] = crawl_source(source)
+            results[source.name] = crawl_source(source)
         except Exception as e:
-            logger.exception("抓取失败: %s", source.get("name"))
-            results[source["name"]] = {
-                "source": source.get("name", ""),
+            logger.exception("抓取失败: %s", source.name)
+            results[source.name] = {
+                "source": source.name,
                 "discovered": 0,
                 "new": 0,
                 "skipped": 0,

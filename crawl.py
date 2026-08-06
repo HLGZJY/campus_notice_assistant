@@ -11,11 +11,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
 # 确保包能正确导入
 sys.path.insert(0, str(Path(__file__).parent))
 
+from config.schema import SourceConfig
+from config.store import ConfigStore
 from crawler import ListPageConfig, WebCrawler
 
 logging.basicConfig(
@@ -24,23 +24,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(__file__).parent / "config" / "scuec.yaml"
+
+def get_school_config():
+    """从 ConfigStore 获取当前活跃学校的数据源配置。"""
+    return ConfigStore.get_instance().get_school()
 
 
-def load_config(config_path: Optional[Path] = None) -> dict:
-    """加载 YAML 配置。"""
-    path = config_path or CONFIG_PATH
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def crawl_source(source_cfg: dict) -> None:
+def crawl_source(source_cfg: SourceConfig) -> None:
     """抓取单个来源。"""
     config = ListPageConfig(
-        list_url=source_cfg["list_url"],
-        source_name=source_cfg.get("name", source_cfg["list_url"]),
-        url_pattern=source_cfg.get("url_pattern"),
-        max_pages=source_cfg.get("max_pages", 20),
+        list_url=source_cfg.list_url,
+        source_name=source_cfg.name or source_cfg.list_url,
+        url_pattern=source_cfg.url_pattern,
+        max_pages=source_cfg.max_pages,
     )
 
     logger.info(f"开始抓取: {config.source_name}")
@@ -72,30 +68,24 @@ def main():
         type=str,
         help="只抓取指定名称的来源",
     )
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="配置文件路径",
-    )
     args = parser.parse_args()
 
     if args.list_url:
         # 直接抓取指定 URL
         crawl_source(
-            {
-                "name": args.list_url,
-                "list_url": args.list_url,
-                "max_pages": 20,
-            }
+            SourceConfig(
+                name=args.list_url,
+                list_url=args.list_url,
+                max_pages=20,
+            )
         )
         return
 
-    # 从配置文件加载
-    config_path = Path(args.config) if args.config else None
-    config = load_config(config_path)
+    # 从 ConfigStore 加载当前学校配置
+    school_config = get_school_config()
 
-    for source_cfg in config.get("sources", []):
-        if args.source and source_cfg.get("name") != args.source:
+    for source_cfg in school_config.sources:
+        if args.source and source_cfg.name != args.source:
             continue
         crawl_source(source_cfg)
 
