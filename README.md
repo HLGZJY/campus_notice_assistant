@@ -31,15 +31,16 @@ MVP 阶段先用 **中南民族大学 (scuec.edu.cn)** 验证，核心场景是 
 
 ## 技术栈
 
-| 层         | 选型                                   | 说明                      |
-| ---------- | -------------------------------------- | ------------------------- |
-| LLM        | opencode-go (Kimi K2.7 Code)           | OpenAI 兼容接口，线上调用 |
-| Embedding  | sentence-transformers/all-MiniLM-L6-v2 | 本地轻量模型，384 维      |
-| 向量库     | Chroma                                 | 轻量，嵌入式              |
-| Agent 框架 | OpenAI Agents SDK                      | Capstone 课程要求         |
-| 前端       | Streamlit                              | MVP 快速验证              |
-| 数据存储   | SQLite                                 | 轻量，单文件              |
-| 抓取       | requests + BeautifulSoup               | 通用网页抓取              |
+| 层         | 选型                                   | 说明                                |
+| ---------- | -------------------------------------- | ----------------------------------- |
+| LLM        | 可配置（默认 opencode-go）             | OpenAI 兼容接口，按任务选择模型     |
+| Embedding  | 可配置（默认本地 all-MiniLM-L6-v2）    | 本地轻量模型，384 维                |
+| 向量库     | Chroma                                 | 轻量，嵌入式                        |
+| Agent 框架 | OpenAI Agents SDK                      | Capstone 课程要求                   |
+| 前端       | Streamlit                              | MVP 快速验证                        |
+| 数据存储   | SQLite                                 | 轻量，单文件                        |
+| 配置       | YAML + 环境变量                        | `config/app.yaml` / `.env`          |
+| 抓取       | requests + BeautifulSoup               | 通用网页抓取                        |
 
 ## 快速开始
 
@@ -49,34 +50,68 @@ pip install -r requirements.txt
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入 opencode-go API key（OPENCODE_API_KEY / OPENCODE_BASE_URL / LLM_MODEL）
+# 编辑 .env 填入 API key（如 OPENCODE_API_KEY）
 
-# 3. 初始化数据库
+# 3. 确认 / 修改配置（二选一）
+# 方式 A：直接编辑 YAML
+code config/app.yaml          # 模型 / 供应商 / 活跃学校
+code config/schools/scuec.yaml # 数据源
+# 方式 B：启动后在「系统配置」页面可视化修改
+
+# 4. 初始化数据库
 python -m campus_assistant.init_db
 
-# 4. 抓取通知（首次）
+# 5. 抓取通知（首次）
 python -m campus_assistant.crawler
 # 或： python crawl.py
 
-# 5. 结构化提取（M2）
+# 6. 结构化提取（M2）
 python extract.py                  # 批量提取 status=raw 的通知
 python evaluate_extraction.py      # 用黄金集评估提取准确率
 
-# 6. 待办生成（M3）
+# 7. 待办生成（M3）
 python todo.py --notice 2          # 按需生成某通知的待办
 python todo.py --list              # 待办清单（按截止升序）
 streamlit run ui/todo_app.py       # M3 小界面：点按钮生成待办
 
-# 7. RAG 问答（M4）
+# 8. RAG 问答（M4）
 python index.py                    # 把已提取通知切分并索引到 Chroma
 python qa.py "最近有哪些比赛？"     # 单次问答
 python qa.py                        # 交互式问答
 
-# 8. 启动 M5 整合应用
+# 9. 启动 M5/M6 整合应用
 streamlit run app.py
-# 多页面应用：仪表盘 / 通知浏览 / 待办清单 / 智能问答
+# 多页面应用：仪表盘 / 通知浏览 / 待办清单 / 智能问答 / 系统配置
 # 在"通知浏览"页面可手动触发抓取、提取，提取成功后自动增量更新索引
 ```
+
+## 配置说明
+
+配置文件位于 `config/`：
+
+- `config/app.yaml`：应用主配置，包含 `active_school`、`models`（按任务配置模型）、`providers`（供应商注册表）、`crawl`（全局抓取参数）。
+- `config/schools/<code>.yaml`：学校数据源配置，每个学校一个文件。
+- `.env`：存放 API key 等敏感信息，通过 `api_key_env` 被 YAML 引用。
+
+模型配置示例：
+
+```yaml
+models:
+  extraction:
+    provider: opencode-zen
+    model: kimi-k2.7-code
+  qa:
+    provider: opencode-zen
+    model: deepseek-v4-pro
+  todo:
+    provider: opencode-zen
+    model: kimi-k2.7-code
+  embedding:
+    provider: local
+    model: all-MiniLM-L6-v2
+```
+
+新增供应商只需在 `providers` 下添加条目并配置对应的环境变量名即可。切换模型在「系统配置」页面或 YAML 中修改后保存，Streamlit 会自动重新加载。
 
 ## 项目状态
 

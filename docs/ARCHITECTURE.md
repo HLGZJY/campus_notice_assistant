@@ -34,8 +34,13 @@ graph TB
 
 ```
 campus_assistant/
-├── config/              # 学校配置
-│   └── scuec.yaml       # 中南民族大学配置
+├── config/              # 配置层（M6）
+│   ├── app.yaml         # 应用主配置：模型/供应商/活跃学校
+│   ├── schema.py        # Pydantic 配置模型
+│   ├── store.py         # ConfigStore 单例加载器
+│   ├── defaults.py      # 内置默认配置
+│   └── schools/         # 学校数据源配置
+│       └── scuec.yaml   # 中南民族大学配置
 ├── crawler/             # 通知抓取（基于 newspaper4k）
 │   ├── base.py          # 爬虫基类（封装 newspaper.Source）
 │   └── web_crawler.py   # 网页爬虫（列表页发现 + 详情页提取）
@@ -51,12 +56,14 @@ campus_assistant/
 │   ├── models.py        # 数据类模型
 │   └── vectorstore.py   # Chroma 向量库（M4）
 ├── utils/               # 工具
-│   ├── llm.py           # LLM 客户端（opencode-go，.env 配置）
-│   └── embedding.py     # Embedding 客户端（M4）
-├── services/            # M5 服务层：封装 M1-M4 能力供 UI 调用
+│   ├── llm.py           # LLM 客户端（按任务从 ConfigStore 读取）
+│   └── embedding.py     # Embedding 客户端（M4 + M6 配置化）
+├── services/            # M5/M6 服务层：封装 M1-M4 能力供 UI 调用
 │   ├── notice_service.py  # 爬取 + 提取 + 通知查询
 │   ├── todo_service.py    # 待办查询/生成/状态更新
-│   └── qa_service.py      # 问答 + 向量索引管理
+│   ├── qa_service.py      # 问答 + 向量索引管理
+│   ├── config_service.py  # 配置读写 + 连通性测试
+│   └── admin_service.py   # 通知/待办/索引 CRUD + 批量操作
 ├── ui/                  # 前端
 │   └── todo_app.py      # M3 待办 Demo（保留，M5 提供完整替代）
 ├── pages/               # M5 Streamlit 多页面
@@ -206,35 +213,58 @@ todo_agent = Agent(
 )
 ```
 
-## 6. 学校配置设计
+## 6. 配置设计（M6）
+
+配置拆分为应用级与学校级两层：
 
 ```yaml
-# config/scuec.yaml
-school:
-  name: 中南民族大学
-  code: scuec
+# config/app.yaml：应用主配置
+active_school: scuec
 
-sources:
-  - name: 创新创业学院
-    type: web
-    list_url: https://www.scuec.edu.cn/cxcy/tzgg.htm
-    # newspaper4k 会自动发现文章链接，无需 item_selector
-    language: zh
+models:
+  extraction: { provider: opencode-zen, model: kimi-k2.7-code }
+  qa:         { provider: opencode-zen, model: deepseek-v4-pro }
+  todo:       { provider: opencode-zen, model: kimi-k2.7-code }
+  embedding:  { provider: local, model: all-MiniLM-L6-v2 }
 
-  - name: 教务处
-    type: web
-    list_url: https://www.scuec.edu.cn/jwc/tzgg.htm
-    language: zh
+providers:
+  opencode-zen:
+    name: opencode-zen
+    base_url: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_API_KEY
+  local:
+    name: local
+    base_url: ""
+    api_key_env: ""
 
 crawl:
   interval_minutes: 60
-  memoize_articles: true   # newspaper4k 去重
-  max_articles_per_source: 50
-
-llm:
-  model: kimi-k2.7-code
-  base_url: ${OPENCODE_BASE_URL}
+  user_agent: CampusAssistant/1.0
+  max_pages: 5
 ```
+
+```yaml
+# config/schools/scuec.yaml：学校数据源配置
+name: 中南民族大学
+code: scuec
+
+sources:
+  - name: 创新创业学院-竞赛通知
+    type: web
+    list_url: https://www.scuec.edu.cn/cxcy/scss/jstz.htm
+    max_pages: 5
+
+  - name: 教务处-管理文件
+    type: web
+    list_url: https://www.scuec.edu.cn/jwc/glwj.htm
+    max_pages: 5
+```
+
+配置加载流程：
+1. `config/store.py` 读取 `config/app.yaml`，失败则回退到 `.bak`，再失败使用内置默认值
+2. 通过 `active_school` 字段加载 `config/schools/<code>.yaml`
+3. API Key 通过 `provider.api_key_env` 引用 `.env` 中的环境变量
+4. 保存配置时自动备份旧文件到 `.bak`，并通过 `version` 计数器驱动 embedding / agent 缓存失效
 
 ## 7. 错误处理策略
 
