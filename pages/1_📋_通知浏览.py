@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 from core.models import ACTION_NOTICE_TYPES
+from services.admin_service import delete_notice, re_extract_notice
 from services.notice_service import (
     crawl_all_sources,
     extract_batch,
@@ -128,7 +129,7 @@ for n in notices:
         with meta_cols[2]:
             st.caption(f"抓取：{n.get('crawled_at') or '-'}")
         with meta_cols[3]:
-            btn_cols = st.columns([1, 1, 1])
+            btn_cols = st.columns([1, 1, 1, 1, 1])
             with btn_cols[0]:
                 if n.get("status") == "raw":
                     if st.button("🔍 提取", key=f"extract_{n['id']}", use_container_width=True):
@@ -141,6 +142,18 @@ for n in notices:
                                     st.error(f"提取失败: {result.get('error')}")
                             except Exception as e:
                                 st.error(f"提取失败: {type(e).__name__}: {e}")
+                        st.rerun()
+                elif n.get("status") in ("extracted", "partial", "failed"):
+                    if st.button("🔄 重提", key=f"reextract_{n['id']}", use_container_width=True):
+                        with st.spinner("重新提取中..."):
+                            try:
+                                result = re_extract_notice(n["id"], auto_index=True)
+                                if result["success"]:
+                                    st.success("重新提取成功")
+                                else:
+                                    st.error(f"重新提取失败: {result.get('error')}")
+                            except Exception as e:
+                                st.error(f"重新提取失败: {type(e).__name__}: {e}")
                         st.rerun()
             with btn_cols[1]:
                 if n.get("notice_type") in ACTION_NOTICE_TYPES:
@@ -155,6 +168,20 @@ for n in notices:
             with btn_cols[2]:
                 if n.get("url"):
                     st.link_button("🔗 原文", url=n["url"], use_container_width=True)
+            with btn_cols[3]:
+                with st.popover("🗑️ 删除", use_container_width=True):
+                    st.warning("删除将同时清理该通知的待办和向量索引 chunk。")
+                    c1, c2 = st.columns(2)
+                    if c1.button("确认", key=f"confirm_yes_{n['id']}", use_container_width=True):
+                        with st.spinner("删除中..."):
+                            result = delete_notice(n["id"])
+                        if result["ok"]:
+                            st.success("已删除")
+                        else:
+                            st.error(f"删除失败: {result.get('error')}")
+                        st.rerun()
+                    if c2.button("取消", key=f"confirm_no_{n['id']}", use_container_width=True):
+                        pass
 
         with st.expander("查看详情 / 原文"):
             detail = get_notice_detail(n["id"])
