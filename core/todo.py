@@ -29,7 +29,7 @@ from agents import (
 from openai import AsyncOpenAI, BadRequestError
 
 from core.models import ACTION_NOTICE_TYPES, TodoItem, TodoList
-from utils.llm import LLMConfig, get_llm_config
+from utils.llm import get_model_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -113,23 +113,23 @@ def template_fallback(notice: dict) -> TodoItem:
 class TodoGenerator:
     """基于 OpenAI Agents SDK 的待办生成器。"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
-        self.config = config or get_llm_config()
+    def __init__(self):
+        self.api_key, self.base_url, self.model = get_model_for_task("todo")
         self._agent: Optional[Agent] = None
 
     def _get_agent(self) -> Agent:
         if self._agent is None:
             set_tracing_disabled(True)  # 不向 OpenAI 导出 trace
             client = AsyncOpenAI(
-                api_key=self.config.api_key,
-                base_url=self.config.base_url,
+                api_key=self.api_key,
+                base_url=self.base_url,
             )
             set_default_openai_client(client, use_for_tracing=False)
             set_default_openai_api("chat_completions")
             self._agent = Agent(
                 name="待办生成助手",
                 instructions=TODO_INSTRUCTIONS,
-                model=self.config.model,
+                model=self.model,
                 output_type=TodoList,
                 model_settings=ModelSettings(
                     extra_body={"response_format": {"type": "json_object"}}

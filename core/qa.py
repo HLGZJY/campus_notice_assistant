@@ -22,7 +22,7 @@ from agents import (
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from utils.llm import LLMConfig, get_llm_config
+from utils.llm import get_model_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,6 @@ class QAAgent:
     def __init__(
         self,
         index: Optional["VectorIndex"] = None,
-        config: Optional[LLMConfig] = None,
         top_k: int = DEFAULT_TOP_K,
         max_sources: int = DEFAULT_MAX_SOURCES,
     ):
@@ -75,7 +74,7 @@ class QAAgent:
 
             index = VectorIndex()
         self.index = index
-        self.config = config or get_llm_config()
+        self.api_key, self.base_url, self.model = get_model_for_task("qa")
         self.top_k = top_k
         self.max_sources = max_sources
         self._agent: Optional[Agent] = None
@@ -84,15 +83,15 @@ class QAAgent:
         if self._agent is None:
             set_tracing_disabled(True)
             client = AsyncOpenAI(
-                api_key=self.config.api_key,
-                base_url=self.config.base_url,
+                api_key=self.api_key,
+                base_url=self.base_url,
             )
             set_default_openai_client(client, use_for_tracing=False)
             set_default_openai_api("chat_completions")
             self._agent = Agent(
                 name="通知问答助手",
                 instructions=QA_INSTRUCTIONS,
-                model=self.config.model,
+                model=self.model,
             )
         return self._agent
 

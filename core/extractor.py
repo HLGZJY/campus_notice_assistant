@@ -30,7 +30,7 @@ from core.date_utils import (
     strip_deadline_noise,
 )
 from core.models import NoticeExtraction
-from utils.llm import LLMConfig, get_llm_config
+from utils.llm import get_model_for_task
 
 logger = logging.getLogger(__name__)
 
@@ -123,23 +123,23 @@ def classify_status(ext: NoticeExtraction) -> str:
 class NoticeExtractor:
     """基于 OpenAI Agents SDK 的提取器。"""
 
-    def __init__(self, config: Optional[LLMConfig] = None):
-        self.config = config or get_llm_config()
+    def __init__(self):
+        self.api_key, self.base_url, self.model = get_model_for_task("extraction")
         self._agent: Optional[Agent] = None
 
     def _get_agent(self) -> Agent:
         if self._agent is None:
             set_tracing_disabled(True)  # 不向 OpenAI 导出 trace
             client = AsyncOpenAI(
-                api_key=self.config.api_key,
-                base_url=self.config.base_url,
+                api_key=self.api_key,
+                base_url=self.base_url,
             )
             set_default_openai_client(client, use_for_tracing=False)
             set_default_openai_api("chat_completions")
             self._agent = Agent(
                 name="通知提取助手",
                 instructions=EXTRACTOR_INSTRUCTIONS,
-                model=self.config.model,
+                model=self.model,
                 output_type=NoticeExtraction,
                 model_settings=ModelSettings(
                     extra_body={"response_format": {"type": "json_object"}}
