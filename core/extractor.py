@@ -22,7 +22,7 @@ from agents import (
     set_default_openai_client,
     set_tracing_disabled,
 )
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from core.date_utils import (
     extract_reference_date,
@@ -34,7 +34,7 @@ from utils.llm import LLMConfig, get_llm_config
 
 logger = logging.getLogger(__name__)
 
-MAX_CONTENT_CHARS = 4000  # 正文截断，控制 token 成本
+MAX_CONTENT_CHARS = 3000  # 正文截断，控制 token 成本
 MAX_RETRIES = 2  # 校验失败重试次数
 
 EXTRACTOR_INSTRUCTIONS = """你是一名校园通知结构化提取助手。你的任务是从一条学校通知中提取关键结构化信息。
@@ -154,7 +154,7 @@ class NoticeExtractor:
         published_at: Optional[str] = None,
         crawled_at: Optional[str] = None,
     ) -> ExtractionOutcome:
-        """提取单条通知，带校验重试。"""
+        """提取单条通知，带校验重试。400 类永久错误不重试，直接标记失败。"""
         reference: Optional[date] = extract_reference_date(published_at, crawled_at)
         prompt = build_prompt(title, content, published_at, crawled_at)
 
@@ -164,8 +164,15 @@ class NoticeExtractor:
         for attempt in range(MAX_RETRIES + 1):
             try:
                 ext = await self._call(prompt, last_error)
+            except BadRequestError as e:
+                # 400 错误（prompt 被上游拒绝/内容过滤/token 超限等）不可恢复
+                msg = f"LLM 请求被拒绝: {type(e).__name__}: {e}"
+                logger.warning("提取失败(不可恢复) %s: %s", title, msg[:200])
+                return ExtractionOutcome(status="failed", extraction=None, error=msg)
             except Exception as e:
                 last_error = f"LLM 调用或输出解析失败: {type(e).__name__}: {e}"
+                if len(last_error) > 500:
+                    last_error = last_error[:500] + "..."
                 logger.warning("提取调用失败(%d/%d) %s: %s", attempt + 1, MAX_RETRIES + 1, title, last_error[:200])
                 continue
 
@@ -174,6 +181,8 @@ class NoticeExtractor:
             if not errors:
                 return ExtractionOutcome(status=classify_status(ext), extraction=ext, error=None)
             last_error = "；".join(errors)
+            if len(last_error) > 500:
+                last_error = last_error[:500] + "..."
             logger.info("提取校验未通过(%d/%d) %s: %s", attempt + 1, MAX_RETRIES + 1, title, last_error)
 
         # 重试耗尽：保留最后一次结果，但记录错误

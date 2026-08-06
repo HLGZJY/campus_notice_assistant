@@ -53,15 +53,23 @@ campus_assistant/
 ├── utils/               # 工具
 │   ├── llm.py           # LLM 客户端（opencode-go，.env 配置）
 │   └── embedding.py     # Embedding 客户端（M4）
+├── services/            # M5 服务层：封装 M1-M4 能力供 UI 调用
+│   ├── notice_service.py  # 爬取 + 提取 + 通知查询
+│   ├── todo_service.py    # 待办查询/生成/状态更新
+│   └── qa_service.py      # 问答 + 向量索引管理
 ├── ui/                  # 前端
-│   └── todo_app.py      # M3 待办 Demo（M5 会吸收合并）
+│   └── todo_app.py      # M3 待办 Demo（保留，M5 提供完整替代）
+├── pages/               # M5 Streamlit 多页面
+│   ├── 1_📋_通知浏览.py  # 通知列表、爬取/提取、详情卡片
+│   ├── 2_✅_待办清单.py  # 待办管理与生成
+│   └── 3_💬_智能问答.py  # RAG 问答
 ├── crawl.py             # M1 入口：抓取通知
 ├── extract.py           # M2 入口：批量结构化提取
 ├── todo.py              # M3 入口：待办生成/列表/状态管理
 ├── index.py             # M4 入口：构建/更新 Chroma 向量索引
 ├── qa.py                # M4 入口：RAG 问答
 ├── evaluate_extraction.py  # M2 验收：黄金集评估
-└── app.py               # 入口
+└── app.py               # M5 入口：Streamlit 仪表盘首页
 ```
 
 > **爬虫层说明**：不再自己写 BeautifulSoup 选择器，改用 `newspaper4k` 库。
@@ -92,6 +100,8 @@ sequenceDiagram
     E->>V: 生成向量并索引
     E->>DB: 生成待办项
 ```
+
+> **M5 实现**：上述"调度器"由 Streamlit UI 页面 (`pages/1_📋_通知浏览.py`) 中的按钮承担，用户点击后调用 `services/notice_service.py` 的 `crawl_all_sources()` / `extract_batch()`，提取成功后自动调用 `VectorIndex.add_notice()` 增量索引。
 
 ### 3.2 问答流程
 

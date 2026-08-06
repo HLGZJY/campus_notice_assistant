@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from storage.vectorstore import VectorIndex
 
 from agents import (
     Agent,
@@ -19,7 +22,6 @@ from agents import (
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from storage.vectorstore import VectorIndex
 from utils.llm import LLMConfig, get_llm_config
 
 logger = logging.getLogger(__name__)
@@ -63,12 +65,16 @@ class QAAgent:
 
     def __init__(
         self,
-        index: Optional[VectorIndex] = None,
+        index: Optional["VectorIndex"] = None,
         config: Optional[LLMConfig] = None,
         top_k: int = DEFAULT_TOP_K,
         max_sources: int = DEFAULT_MAX_SOURCES,
     ):
-        self.index = index or VectorIndex()
+        if index is None:
+            from storage.vectorstore import VectorIndex
+
+            index = VectorIndex()
+        self.index = index
         self.config = config or get_llm_config()
         self.top_k = top_k
         self.max_sources = max_sources

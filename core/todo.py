@@ -26,7 +26,7 @@ from agents import (
     set_default_openai_client,
     set_tracing_disabled,
 )
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from core.models import ACTION_NOTICE_TYPES, TodoItem, TodoList
 from utils.llm import LLMConfig, get_llm_config
@@ -145,8 +145,13 @@ class TodoGenerator:
             try:
                 result = await self._call(prompt, last_error)
                 return self._postprocess(result, notice)
+            except BadRequestError:
+                # 400 错误不可恢复，直接抛出由调用方 fallback 兜底
+                raise
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
+                if len(last_error) > 500:
+                    last_error = last_error[:500] + "..."
                 logger.warning("待办生成失败，重试: %s", last_error[:160])
         raise RuntimeError(last_error or "待办生成失败")
 
