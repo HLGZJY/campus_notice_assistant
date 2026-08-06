@@ -1,0 +1,30 @@
+# 校园通知智能助手 - 主配置
+# API Key 不在本文件保存，请通过 api_key_env 引用 .env 中的环境变量
+
+active_school: scuec
+models:
+  extraction:
+    provider: opencode-zen
+    model: kimi-k2.7-code
+  qa:
+    provider: opencode-zen
+    model: kimi-k2.7-code
+  todo:
+    provider: opencode-zen
+    model: kimi-k2.7-code
+  embedding:
+    provider: local
+    model: sentence-transformers/all-MiniLM-L6-v2
+providers:
+  opencode-zen:
+    name: opencode-zen
+    base_url: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_API_KEY
+  local:
+    name: local
+    base_url: ''
+    api_key_env: ''
+crawl:
+  interval_minutes: 60
+  user_agent: CampusAssistant/1.0
+  max_pages: 5

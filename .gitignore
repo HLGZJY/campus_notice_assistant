@@ -5,3 +5,5 @@ data/*.db
 data/chroma/
 *.log
 .env
+*.bak
+*.tmp
